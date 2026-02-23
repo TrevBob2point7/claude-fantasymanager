@@ -1,0 +1,14 @@
+services:
+  backend:
+    build: ../backend
+    volumes:
+      - ..:/workspace:cached
+    command: sleep infinity
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://fantasy:fantasy_dev_password@db:5432/fantasy_manager
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    env_file: ../.env
