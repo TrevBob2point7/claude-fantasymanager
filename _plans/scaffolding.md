@@ -18,7 +18,7 @@ The repo has only README.md, CLAUDE.md, and _plans/ — no code. The tech stack 
 
 | File | Purpose |
 |------|---------|
-| `pyproject.toml` | Project metadata + dependencies managed by **uv** (fastapi, uvicorn[standard], sqlalchemy[asyncio], asyncpg, alembic, python-jose, passlib, pydantic-settings, httpx) |
+| `pyproject.toml` | Project metadata + dependencies managed by **uv** (fastapi, uvicorn[standard], sqlalchemy[asyncio], asyncpg, alembic, python-jose, passlib, pydantic-settings, httpx). Dev deps: pytest, pytest-asyncio, factory-boy |
 | `Dockerfile` | python:3.12-slim, installs **uv** via pip, uses `uv sync` to install deps, runs uvicorn with --reload |
 | `.dockerignore` | Exclude __pycache__, .venv, .env |
 | `app/__init__.py` | Package marker |
@@ -47,7 +47,7 @@ The repo has only README.md, CLAUDE.md, and _plans/ — no code. The tech stack 
 
 | File | Purpose |
 |------|---------|
-| `package.json` | react 19, react-dom 19, vite 6, @vitejs/plugin-react, typescript 5.7 |
+| `package.json` | react 19, react-dom 19, vite 6, @vitejs/plugin-react, typescript 5.7. Dev deps: vitest, @testing-library/react, @testing-library/jest-dom, jsdom, @playwright/test |
 | `tsconfig.json` | Strict TS config, ES2020 target, react-jsx |
 | `tsconfig.app.json` | Extends base, composite for project references |
 | `tsconfig.node.json` | Extends base, for vite.config.ts |
@@ -65,22 +65,51 @@ The repo has only README.md, CLAUDE.md, and _plans/ — no code. The tech stack 
 | `src/api/.gitkeep` | Placeholder dir |
 | `src/context/.gitkeep` | Placeholder dir |
 
+### Phase 5: Test Infrastructure
+
+**Backend tests (`backend/tests/`):**
+
+| File | Purpose |
+|------|---------|
+| `tests/__init__.py` | Package marker |
+| `tests/conftest.py` | Async test client fixture (httpx `AsyncClient`), test DB session fixture (creates/drops test DB per session) |
+| `tests/test_health.py` | First passing test: `GET /health` returns 200 with `{"status": "healthy", "database": "connected"}` |
+
+**Frontend unit tests:**
+
+| File | Purpose |
+|------|---------|
+| `vitest.config.ts` | Vitest config: jsdom environment, setup file for testing-library |
+| `src/test-setup.ts` | Imports `@testing-library/jest-dom` matchers |
+| `src/App.test.tsx` | First passing test: App component renders "Fantasy Manager" heading |
+
+**E2E tests (`frontend/e2e/`):**
+
+| File | Purpose |
+|------|---------|
+| `e2e/playwright.config.ts` | Playwright config: base URL `http://localhost:3000`, webServer command to start Docker Compose |
+| `e2e/tests/health.spec.ts` | First passing e2e test: page loads, shows backend health status |
+
+**Makefile targets:** `test-backend`, `test-frontend`, `test-e2e`, `test` (runs all)
+
 ## Agent Workstreams (post-scaffold)
 
-Four agents, each owning a distinct area. Can be parallel Claude Code sessions or sequential focus areas.
+Five agents, each owning a distinct area. Can be parallel Claude Code sessions or sequential focus areas.
 
 | Agent | Owns | Responsibilities |
 |-------|------|-----------------|
 | **Backend API** | `backend/app/api/`, `models/`, `schemas/`, `auth/` | SQLAlchemy models, Pydantic schemas, FastAPI routes, JWT auth. Largest surface area — defines the API contracts the frontend builds against. |
-| **Frontend UI** | `frontend/` | React components, pages, API client, auth context, state management. Starts once the first API endpoints are available. |
+| **Frontend UI** | `frontend/src/` | React components, pages, API client, auth context, state management. Starts once the first API endpoints are available. |
 | **Platform + Sync** | `backend/app/platforms/`, `backend/app/sync/` | MFL and Sleeper adapters, data normalization, DynastyProcess player import, background sync scheduler. Most domain-specific work. |
+| **QA / Test** | `backend/tests/`, `frontend/src/**/*.test.*`, `frontend/e2e/` | Writes and maintains tests across all layers. Backend: pytest integration tests for API endpoints. Frontend: Vitest component tests. E2E: Playwright flows for critical paths (login, link accounts, dashboard). Runs in parallel with other agents — writes tests as features land. |
 | **Infrastructure** | `docker-compose.yml`, `alembic/`, CI/CD, deployment | Migrations, Docker config, Cloudflare Tunnel, deploy scripts. Lighter workload but keeps others unblocked. |
 
 **Build order:**
-1. **Infra** scaffolds first (this plan)
+1. **Infra** scaffolds first (this plan, including test infrastructure)
 2. **Backend API** builds models + auth + initial endpoints
 3. **Platform/Sync** builds adapters in parallel once the model layer exists
 4. **Frontend UI** starts once the first API endpoints are available
+5. **QA/Test** runs continuously — writes tests as each agent delivers features
 
 ## Not in Scope (post-scaffold)
 
@@ -100,3 +129,6 @@ Four agents, each owning a distinct area. Can be parallel Claude Code sessions o
 2. `docker compose up` — all 3 services start, DB healthcheck passes
 3. `curl http://localhost:8000/health` → `{"status":"healthy","database":"connected"}`
 4. `http://localhost:3000` → React app with green "Backend: healthy | DB: connected" message
+5. `make test-backend` — pytest passes (health endpoint test)
+6. `make test-frontend` — vitest passes (App component render test)
+7. `make test-e2e` — Playwright passes (page loads with health status)
