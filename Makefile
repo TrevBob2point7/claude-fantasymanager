@@ -16,7 +16,7 @@ logs:
 	$(DOCKER_COMPOSE) logs -f
 
 migrate:
-	$(DOCKER_COMPOSE) exec backend alembic upgrade head
+	$(DOCKER_COMPOSE) exec backend uv run alembic upgrade head
 
 shell-backend:
 	$(DOCKER_COMPOSE) exec backend bash
