@@ -36,6 +36,11 @@ make test-backend   # pytest (backend)
 make test-frontend  # vitest (frontend)
 make test-e2e       # Playwright e2e tests
 make test           # Run backend + frontend tests
+
+# Linting & Formatting
+make lint            # ruff check (backend) + eslint (frontend)
+make format          # ruff format (backend) + prettier (frontend)
+make typecheck       # ruff check (backend) + tsc --noEmit (frontend)
 ```
 
 ## Project Structure
@@ -70,3 +75,4 @@ frontend/
 - **Migrations:** Alembic with async support. Run `make migrate` after model changes.
 - **Frontend proxy:** Vite dev server proxies `/api` to `http://localhost:8000`. Nginx does the same in production.
 - **Testing:** Backend uses `pytest-asyncio` with `httpx.AsyncClient`. Frontend uses `vitest` + `@testing-library/react`.
+- **Linting:** Backend uses Ruff (linting + formatting). Frontend uses ESLint 9 (flat config, typescript-eslint) + Prettier. Pre-commit hook via husky + lint-staged runs on staged files.

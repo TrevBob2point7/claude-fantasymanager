@@ -1,7 +1,7 @@
 # Use docker compose v2 if available, fallback to docker-compose v1
 DOCKER_COMPOSE := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
 
-.PHONY: up down build logs migrate shell-backend dev-backend dev-frontend test test-backend test-frontend test-e2e
+.PHONY: up down build logs migrate shell-backend dev-backend dev-frontend test test-backend test-frontend test-e2e lint format typecheck
 
 up:
 	$(DOCKER_COMPOSE) up -d
@@ -37,3 +37,15 @@ test-frontend:
 
 test-e2e:
 	cd frontend && npx playwright test
+
+lint:
+	cd backend && uv run ruff check .
+	cd frontend && npm run lint
+
+format:
+	cd backend && uv run ruff format .
+	cd frontend && npm run format
+
+typecheck:
+	cd backend && uv run ruff check .
+	cd frontend && npx tsc --noEmit

@@ -1,0 +1,13 @@
+{
+  "backend/**/*.py": [
+    "bash -c 'cd backend && uv run ruff check --fix \"$@\"' --",
+    "bash -c 'cd backend && uv run ruff format \"$@\"' --"
+  ],
+  "frontend/**/*.{ts,tsx}": [
+    "bash -c 'cd frontend && npx eslint --fix \"$@\"' --",
+    "bash -c 'cd frontend && npx prettier --write \"$@\"' --"
+  ],
+  "frontend/**/*.{json,css,html}": [
+    "bash -c 'cd frontend && npx prettier --write \"$@\"' --"
+  ]
+}
