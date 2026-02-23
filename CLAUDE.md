@@ -76,3 +76,28 @@ frontend/
 - **Frontend proxy:** Vite dev server proxies `/api` to `http://localhost:8000`. Nginx does the same in production.
 - **Testing:** Backend uses `pytest-asyncio` with `httpx.AsyncClient`. Frontend uses `vitest` + `@testing-library/react`.
 - **Linting:** Backend uses Ruff (linting + formatting). Frontend uses ESLint 9 (flat config, typescript-eslint) + Prettier. Pre-commit hook via husky + lint-staged runs on staged files.
+
+## Commit Convention
+
+This project uses [Conventional Commits](https://www.conventionalcommits.org/). All commit messages must follow this format:
+
+```
+<type>(<scope>): <short summary>
+
+<optional body>
+```
+
+**Types:** `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`
+
+**Scopes:** `backend`, `frontend`, `db`, `infra`, `deps` (or omit for cross-cutting changes)
+
+**Examples:**
+```
+feat(backend): add user registration endpoint
+fix(frontend): prevent double-submit on login form
+refactor(db): normalize league settings into separate table
+test(backend): add integration tests for sync engine
+build(infra): add health check to Docker Compose db service
+chore(deps): bump fastapi to 0.115
+docs: update README getting started section
+```
