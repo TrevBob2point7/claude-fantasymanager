@@ -21,6 +21,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Fantasy Manager API", lifespan=lifespan)
 
+# TODO: Restrict allow_methods and allow_headers for production deployment
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
