@@ -3,7 +3,7 @@ set -e
 
 echo "Installing backend dependencies..."
 cd /workspace/backend
-pip install uv
+pip install uv==0.10.4
 uv sync
 
 echo "Installing frontend dependencies..."
