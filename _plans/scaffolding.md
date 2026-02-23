@@ -95,6 +95,39 @@ The repo has only README.md, CLAUDE.md, and _plans/ — no code. The tech stack 
 
 **Makefile targets:** `test-backend`, `test-frontend`, `test-e2e`, `test` (runs all)
 
+### Phase 6: Linting, Formatting & Pre-commit Hooks
+
+**Backend — Ruff** (linting + formatting in one tool, replaces flake8/black/isort):
+
+| File | Purpose |
+|------|---------|
+| `pyproject.toml` (update) | Add `[tool.ruff]` section — target Python 3.12, line length 100, select rules (E, F, I, UP, B, SIM, RUF), and `[tool.ruff.format]` for black-compatible formatting |
+| `pyproject.toml` (update) | Add `ruff` to dev dependencies |
+
+**Frontend — ESLint 9 + Prettier:**
+
+| File | Purpose |
+|------|---------|
+| `eslint.config.js` | ESLint 9 flat config — `typescript-eslint` for type-aware rules, `eslint-plugin-react-hooks` for hooks rules |
+| `.prettierrc` | Prettier config — minimal (e.g. no semicolons or with, trailing commas) |
+| `package.json` (update) | Add `eslint`, `@eslint/js`, `typescript-eslint`, `eslint-plugin-react-hooks`, `prettier`, `eslint-config-prettier` to dev deps. Add `lint` and `format` scripts. |
+
+**Pre-commit hooks — husky + lint-staged** (root-level):
+
+| File | Purpose |
+|------|---------|
+| `package.json` (root, new) | Root package.json with `husky` and `lint-staged` as dev deps, `prepare` script for husky install |
+| `.husky/pre-commit` | Runs `npx lint-staged` |
+| `.lintstagedrc.json` | Maps `backend/**/*.py` → `ruff check --fix` + `ruff format`, `frontend/**/*.{ts,tsx}` → `eslint --fix` + `prettier --write` |
+
+**Makefile targets:** `lint`, `format`, `typecheck` (runs `tsc --noEmit` for frontend, `ruff check` for backend)
+
+**Verification:**
+1. `make lint` — ruff + eslint pass on existing code
+2. `make format` — ruff format + prettier produce no changes (code already formatted)
+3. `make typecheck` — tsc --noEmit passes
+4. Stage a file with a lint violation → `git commit` is blocked by the pre-commit hook
+
 ## Agent Workstreams (post-scaffold)
 
 Five agents, each owning a distinct area. Can be parallel Claude Code sessions or sequential focus areas.
@@ -128,6 +161,9 @@ Five agents, each owning a distinct area. Can be parallel Claude Code sessions o
 - **`pydantic-settings`** for config instead of python-dotenv — typed, validated, idiomatic for FastAPI.
 - **No React Router yet** — added when multi-page features arrive, not dead code now.
 - **`--reload` in backend Dockerfile** — acceptable for dev/alpha; remove for production.
+- **Ruff for Python linting + formatting**: Single Rust-based tool replaces flake8, black, and isort. Configured in `pyproject.toml` — no extra dotfiles. Extremely fast.
+- **ESLint 9 + Prettier for frontend**: ESLint flat config with `typescript-eslint` for type-aware rules. Prettier handles all formatting. `eslint-config-prettier` disables ESLint rules that conflict with Prettier.
+- **husky + lint-staged for pre-commit**: Runs linters only on staged files so commits are fast. Catches issues before they hit CI.
 
 ## Verification
 1. `docker compose build` — both Dockerfiles build successfully

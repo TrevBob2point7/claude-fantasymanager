@@ -1,0 +1,13 @@
+{
+  "backend/**/*.py": [
+    "uv run --project backend ruff check --fix",
+    "uv run --project backend ruff format"
+  ],
+  "frontend/**/*.{ts,tsx}": [
+    "npx --prefix frontend eslint --fix",
+    "npx --prefix frontend prettier --write"
+  ],
+  "frontend/**/*.{json,css,html}": [
+    "npx --prefix frontend prettier --write"
+  ]
+}

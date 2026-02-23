@@ -176,19 +176,59 @@ docker-compose.yml
 
 ## Getting Started
 
-> Placeholder — will be filled in once scaffolding is built.
-
 ### Prerequisites
-TBD
+
+- [Docker](https://docs.docker.com/get-docker/) and Docker Compose
+- For local dev (outside Docker): Python 3.12+, Node 22+, [uv](https://docs.astral.sh/uv/)
 
 ### Installation
-TBD
 
-### Environment Setup
-TBD
+```bash
+git clone https://github.com/TrevBob2point7/claude-fantasymanager.git
+cd claude-fantasymanager
+cp .env.example .env
+```
 
-### Database Setup
-TBD
+### Quick Start (Docker Compose)
 
-### Development Server
-TBD
+```bash
+make build    # Build backend + frontend images
+make up       # Start all services (PostgreSQL, FastAPI, React/Nginx)
+```
+
+- Frontend: http://localhost:3000
+- Backend API: http://localhost:8001
+- Health check: http://localhost:3000/api/health
+
+### Local Development
+
+Run the database in Docker, backend and frontend locally:
+
+```bash
+make up                # Start PostgreSQL (and other services)
+make dev-backend       # FastAPI on http://localhost:8000 (in a separate terminal)
+make dev-frontend      # Vite on http://localhost:5173 (in a separate terminal)
+```
+
+### Database Migrations
+
+```bash
+make migrate           # Run pending Alembic migrations
+```
+
+### Running Tests
+
+```bash
+make test              # Backend (pytest) + frontend (vitest)
+make test-backend      # Backend only
+make test-frontend     # Frontend only
+make test-e2e          # Playwright end-to-end tests
+```
+
+### Linting & Formatting
+
+```bash
+make lint              # Ruff (backend) + ESLint (frontend)
+make format            # Ruff format (backend) + Prettier (frontend)
+make typecheck         # TypeScript type checking (frontend)
+```
