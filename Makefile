@@ -47,5 +47,4 @@ format:
 	cd frontend && npm run format
 
 typecheck:
-	cd backend && uv run ruff check .
 	cd frontend && npx tsc --noEmit

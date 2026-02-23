@@ -40,7 +40,7 @@ make test           # Run backend + frontend tests
 # Linting & Formatting
 make lint            # ruff check (backend) + eslint (frontend)
 make format          # ruff format (backend) + prettier (frontend)
-make typecheck       # ruff check (backend) + tsc --noEmit (frontend)
+make typecheck       # tsc --noEmit (frontend)
 ```
 
 ## Project Structure
