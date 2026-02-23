@@ -10,7 +10,7 @@ export default defineConfig({
     trace: "on-first-retry",
   },
   webServer: {
-    command: "docker compose -f ../../docker-compose.yml up",
+    command: "docker compose -f ../../docker-compose.yml up --build",
     url: "http://localhost:3000",
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
