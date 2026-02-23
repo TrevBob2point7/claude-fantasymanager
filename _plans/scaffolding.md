@@ -12,7 +12,10 @@ The repo has only README.md, CLAUDE.md, and _plans/ — no code. The tech stack 
 | `.gitignore` | Python + Node + Docker + IDE ignores |
 | `.env.example` | Template for DB, auth, and CORS env vars |
 | `docker-compose.yml` | 3 services: `db` (postgres:16-alpine), `backend` (FastAPI), `frontend` (React/Nginx) |
-| `Makefile` | Convenience commands: `up`, `down`, `build`, `logs`, `migrate`, `shell-backend` |
+| `Makefile` | Convenience commands: `up`, `down`, `build`, `logs`, `migrate`, `shell-backend`, `dev-backend`, `dev-frontend`, `test-*` |
+| `.devcontainer/devcontainer.json` | Dev Container config: Python 3.12 + Node 22 + uv + PostgreSQL client tools. Ensures identical dev environment for all engineers. |
+| `.devcontainer/docker-compose.dev.yml` | Extends main `docker-compose.yml` — runs the DB service, mounts the workspace, and exposes ports for local dev |
+| `.devcontainer/post-create.sh` | Runs after container creation: `uv sync` in backend, `npm install` in frontend, installs Playwright browsers |
 
 ### Phase 2: Backend (`backend/`)
 
@@ -117,6 +120,8 @@ Five agents, each owning a distinct area. Can be parallel Claude Code sessions o
 
 ## Key Design Decisions
 
+- **Dev Containers for environment consistency**: All engineers develop inside the same container — Python 3.12, Node 22, uv, and PostgreSQL client tools are guaranteed identical. Works with VS Code, Cursor, and GitHub Codespaces. Eliminates "works on my machine" issues. Engineers open the repo → "Reopen in Container" → ready to go.
+- **Hybrid dev workflow**: Day-to-day coding runs locally inside the dev container (`uv run uvicorn` for backend, `npm run dev` for frontend) against a Dockerized PostgreSQL. `docker compose up` is for integration testing and deployment verification.
 - **uv for Python dependency management**: Fast dependency resolution (10-100x faster than pip), reproducible builds via `uv.lock`, `pyproject.toml`-based (modern Python standard), and clean Docker integration via `uv sync --frozen`. Replaces pip + requirements.txt.
 - **`/api/` proxy pattern**: Frontend fetches `/api/health`, both Vite (dev) and Nginx (prod) strip the prefix and forward to FastAPI's `/health`. Backend routes stay clean without prefix awareness.
 - **Async SQLAlchemy from the start**: `env.py` is hand-written async (not from `alembic init`) so migrations work with asyncpg.
