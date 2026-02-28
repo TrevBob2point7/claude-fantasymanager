@@ -18,7 +18,7 @@ interface AuthState {
   register: (
     email: string,
     password: string,
-    displayName: string,
+    displayName?: string,
   ) => Promise<void>;
   logout: () => void;
 }
@@ -66,13 +66,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const register = useCallback(
-    async (email: string, password: string, displayName: string) => {
+    async (email: string, password: string, displayName?: string) => {
       setError(null);
       try {
         await post<User>("/auth/register", {
           email,
           password,
-          display_name: displayName,
+          display_name: displayName || undefined,
         });
         // Backend returns User on register (not a token), so auto-login
         const loginData = await post<LoginResponse>("/auth/login", {

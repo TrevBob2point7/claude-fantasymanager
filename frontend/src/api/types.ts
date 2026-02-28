@@ -18,7 +18,7 @@ export interface LoginResponse {
 export interface RegisterRequest {
   email: string;
   password: string;
-  display_name: string;
+  display_name?: string;
 }
 
 export interface PlatformAccount {
