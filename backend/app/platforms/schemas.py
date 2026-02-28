@@ -15,6 +15,7 @@ class PlatformLeague:
     season: int
     roster_size: int | None = None
     scoring_type: str | None = None
+    league_type: str | None = None
     settings: dict | None = None
 
 

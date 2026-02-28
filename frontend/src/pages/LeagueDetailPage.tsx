@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { getLeagueDetail } from "../api/leagues";
-import type { LeagueDetail } from "../api/types";
+import type { LeagueDetail, RosterPlayer } from "../api/types";
+import PlayerADPModal from "../components/PlayerADPModal";
 
 type Tab = "roster" | "standings" | "matchups" | "transactions";
 
@@ -12,23 +13,34 @@ const tabs: { key: Tab; label: string }[] = [
   { key: "transactions", label: "Transactions" },
 ];
 
+const ADP_FORMATS = [
+  { value: "", label: "All" },
+  { value: "ppr", label: "PPR" },
+  { value: "half_ppr", label: "Half PPR" },
+  { value: "standard", label: "Standard" },
+  { value: "superflex", label: "Superflex" },
+  { value: "dynasty", label: "Dynasty" },
+  { value: "two_qb", label: "2QB" },
+];
+
 export default function LeagueDetailPage() {
   const { leagueId } = useParams<{ leagueId: string }>();
   const [league, setLeague] = useState<LeagueDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("roster");
+  const [adpFormat, setAdpFormat] = useState("");
 
   useEffect(() => {
     if (!leagueId) return;
     setLoading(true);
-    getLeagueDetail(leagueId)
+    getLeagueDetail(leagueId, adpFormat || undefined)
       .then(setLeague)
       .catch((err) =>
         setError(err instanceof Error ? err.message : "Failed to load league"),
       )
       .finally(() => setLoading(false));
-  }, [leagueId]);
+  }, [leagueId, adpFormat]);
 
   if (loading) {
     return (
@@ -63,8 +75,11 @@ export default function LeagueDetailPage() {
           {league.name}
         </h1>
         <p className="mt-1 text-text-secondary">
-          {league.season} &middot; {league.scoring_type?.toUpperCase() ?? "—"} &middot;{" "}
-          {league.roster_size ?? "—"} roster spots &middot; {league.team_name ?? "My Team"}
+          {league.season} &middot; {league.scoring_type?.toUpperCase() ?? "—"}
+          {league.league_type && (
+            <> &middot; <span className="capitalize">{league.league_type}</span></>
+          )}
+          {" "}&middot; {league.roster_size ?? "—"} roster spots &middot; {league.team_name ?? "My Team"}
         </p>
       </div>
 
@@ -89,7 +104,13 @@ export default function LeagueDetailPage() {
 
       {/* Tab content */}
       <div className="mt-4">
-        {activeTab === "roster" && <RosterTab roster={league.roster} />}
+        {activeTab === "roster" && (
+          <RosterTab
+            roster={league.roster}
+            adpFormat={adpFormat}
+            onAdpFormatChange={setAdpFormat}
+          />
+        )}
         {activeTab === "standings" && <StandingsTab standings={league.standings} />}
         {activeTab === "matchups" && <MatchupsTab matchups={league.recent_matchups} />}
         {activeTab === "transactions" && (
@@ -100,34 +121,85 @@ export default function LeagueDetailPage() {
   );
 }
 
-function RosterTab({ roster }: { roster: LeagueDetail["roster"] }) {
+function RosterTab({
+  roster,
+  adpFormat,
+  onAdpFormatChange,
+}: {
+  roster: LeagueDetail["roster"];
+  adpFormat: string;
+  onAdpFormatChange: (format: string) => void;
+}) {
+  const [adpPlayer, setAdpPlayer] = useState<RosterPlayer | null>(null);
+
   if (roster.length === 0) {
     return <p className="py-8 text-center text-text-secondary">No roster data available.</p>;
   }
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-border">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-border bg-surface">
-            <th className="px-4 py-3 text-left font-medium text-text-secondary">Player</th>
-            <th className="px-4 py-3 text-left font-medium text-text-secondary">Pos</th>
-            <th className="px-4 py-3 text-left font-medium text-text-secondary">Team</th>
-            <th className="px-4 py-3 text-left font-medium text-text-secondary">Slot</th>
-          </tr>
-        </thead>
-        <tbody>
-          {roster.map((player) => (
-            <tr key={player.id} className="border-b border-border last:border-0">
-              <td className="px-4 py-3 font-medium text-text-primary">{player.player_name}</td>
-              <td className="px-4 py-3 text-text-secondary">{player.position}</td>
-              <td className="px-4 py-3 text-text-secondary">{player.team}</td>
-              <td className="px-4 py-3 text-text-secondary">{player.slot ?? "—"}</td>
+    <>
+      {/* ADP format picker */}
+      <div className="mb-3 flex flex-wrap items-center gap-1.5">
+        <span className="mr-1 text-sm text-text-secondary">ADP:</span>
+        {ADP_FORMATS.map((fmt) => (
+          <button
+            key={fmt.value}
+            onClick={() => onAdpFormatChange(fmt.value)}
+            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+              adpFormat === fmt.value
+                ? "bg-accent text-background"
+                : "bg-surface-hover text-text-secondary hover:text-text-primary"
+            }`}
+          >
+            {fmt.label}
+          </button>
+        ))}
+      </div>
+      <div className="overflow-x-auto rounded-xl border border-border">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border bg-surface">
+              <th className="px-4 py-3 text-left font-medium text-text-secondary">Player</th>
+              <th className="px-4 py-3 text-left font-medium text-text-secondary">Pos</th>
+              <th className="px-4 py-3 text-left font-medium text-text-secondary">Team</th>
+              <th className="px-4 py-3 text-left font-medium text-text-secondary">Slot</th>
+              <th className="px-4 py-3 text-right font-medium text-text-secondary">ADP</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {roster.map((player) => (
+              <tr key={player.id} className="border-b border-border last:border-0">
+                <td className="px-4 py-3 font-medium text-text-primary">{player.player_name}</td>
+                <td className="px-4 py-3 text-text-secondary">{player.position}</td>
+                <td className="px-4 py-3 text-text-secondary">{player.team}</td>
+                <td className="px-4 py-3 text-text-secondary">{player.slot ?? "—"}</td>
+                <td className="px-4 py-3 text-right">
+                  {player.adp ? (
+                    <button
+                      onClick={() => setAdpPlayer(player)}
+                      className="font-score text-accent hover:underline"
+                    >
+                      {player.adp}
+                    </button>
+                  ) : (
+                    <span className="text-text-secondary">—</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {adpPlayer && (
+        <PlayerADPModal
+          playerId={adpPlayer.player_id}
+          playerName={adpPlayer.player_name}
+          position={adpPlayer.position}
+          team={adpPlayer.team}
+          onClose={() => setAdpPlayer(null)}
+        />
+      )}
+    </>
   );
 }
 

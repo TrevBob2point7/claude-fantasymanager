@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models.enums import PlatformType, ScoringType, TransactionType
+from app.models.enums import LeagueType, PlatformType, ScoringType, TransactionType
 
 
 class DiscoverRequest(BaseModel):
@@ -29,6 +29,7 @@ class LeagueRead(BaseModel):
     season: int
     roster_size: int | None
     scoring_type: ScoringType | None
+    league_type: LeagueType | None = None
     team_name: str | None = None
     created_at: datetime
 
@@ -50,10 +51,12 @@ class StandingRead(BaseModel):
 
 class RosterEntryRead(BaseModel):
     id: UUID
+    player_id: UUID
     player_name: str
     position: str | None
     team: str | None
     slot: str | None
+    adp: Decimal | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -88,6 +91,7 @@ class LeagueDetailRead(BaseModel):
     season: int
     roster_size: int | None
     scoring_type: ScoringType | None
+    league_type: LeagueType | None = None
     team_name: str | None = None
     created_at: datetime
     standings: list[StandingRead]
