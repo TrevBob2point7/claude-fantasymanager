@@ -135,7 +135,11 @@ export default function LinkAccountsPage() {
           </p>
         )}
         <div className="flex flex-col gap-3 sm:flex-row">
+          <label htmlFor="sleeper-username" className="sr-only">
+            Sleeper Username
+          </label>
           <input
+            id="sleeper-username"
             type="text"
             required
             placeholder="Sleeper username"

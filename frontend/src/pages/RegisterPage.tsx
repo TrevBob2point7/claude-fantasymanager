@@ -43,10 +43,11 @@ export default function RegisterPage() {
             </p>
           )}
 
-          <label className="mb-1 block text-sm text-text-secondary">
+          <label htmlFor="register-display-name" className="mb-1 block text-sm text-text-secondary">
             Display Name
           </label>
           <input
+            id="register-display-name"
             type="text"
             required
             value={displayName}
@@ -54,10 +55,11 @@ export default function RegisterPage() {
             className="mb-4 w-full rounded-md border border-border bg-surface px-3 py-2 text-text-primary outline-none focus:ring-2 focus:ring-accent"
           />
 
-          <label className="mb-1 block text-sm text-text-secondary">
+          <label htmlFor="register-email" className="mb-1 block text-sm text-text-secondary">
             Email
           </label>
           <input
+            id="register-email"
             type="email"
             required
             value={email}
@@ -65,10 +67,11 @@ export default function RegisterPage() {
             className="mb-4 w-full rounded-md border border-border bg-surface px-3 py-2 text-text-primary outline-none focus:ring-2 focus:ring-accent"
           />
 
-          <label className="mb-1 block text-sm text-text-secondary">
+          <label htmlFor="register-password" className="mb-1 block text-sm text-text-secondary">
             Password
           </label>
           <input
+            id="register-password"
             type="password"
             required
             value={password}
