@@ -2,6 +2,7 @@ import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
+import sqlalchemy as sa
 from sqlalchemy import and_, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -390,6 +391,14 @@ class SyncEngine:
                 ul.platform_team_id: ul for ul in user_leagues if ul.platform_team_id
             }
 
+            # Delete existing transactions for this league+week before re-inserting
+            await self.db.execute(
+                sa.delete(Transaction).where(
+                    Transaction.league_id == league.id,
+                    Transaction.week == week,
+                )
+            )
+
             for pt in platform_txns:
                 tx_type = (
                     TransactionType(pt.type)
@@ -417,6 +426,7 @@ class SyncEngine:
                     txn = Transaction(
                         league_id=league.id,
                         type=tx_type,
+                        week=week,
                         player_id=player.id,
                         to_user_league_id=to_ul.id if to_ul else None,
                         timestamp=datetime.fromtimestamp(pt.timestamp / 1000, tz=UTC)
@@ -444,6 +454,7 @@ class SyncEngine:
                     txn = Transaction(
                         league_id=league.id,
                         type=TransactionType.drop,
+                        week=week,
                         player_id=player.id,
                         from_user_league_id=from_ul.id if from_ul else None,
                         timestamp=datetime.fromtimestamp(pt.timestamp / 1000, tz=UTC)

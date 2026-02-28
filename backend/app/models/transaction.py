@@ -28,6 +28,7 @@ class Transaction(Base):
     type: Mapped[TransactionType] = mapped_column(
         sa.Enum(TransactionType, name="transactiontype"), nullable=False
     )
+    week: Mapped[int] = mapped_column(sa.Integer, nullable=False)
     player_id: Mapped[uuid.UUID | None] = mapped_column(
         sa.Uuid, sa.ForeignKey("players.id"), nullable=True
     )

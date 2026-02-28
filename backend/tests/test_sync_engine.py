@@ -11,6 +11,7 @@ from app.models import (
     Standing,
     SyncLog,
     SyncStatus,
+    Transaction,
     UserLeague,
 )
 from app.models.user import User
@@ -18,6 +19,7 @@ from app.platforms.schemas import (
     PlatformLeague,
     PlatformMatchup,
     PlatformRosterEntry,
+    PlatformTransaction,
     PlatformUser,
 )
 from app.sync.engine import SyncEngine
@@ -250,6 +252,68 @@ class TestSyncStandings:
         assert standings[0].wins == 1
         assert standings[0].losses == 1
         assert standings[0].rank == 1
+
+
+class TestSyncTransactions:
+    async def test_sync_transactions_idempotent(self, db_session: AsyncSession):
+        """Re-syncing the same week should not create duplicate transactions."""
+        user = await _create_test_user(db_session)
+        account = await _create_platform_account(db_session, user)
+        mock_adapter = _mock_adapter()
+
+        # Sync leagues to create league + user_league
+        with patch("app.sync.engine.get_adapter", return_value=mock_adapter):
+            engine = SyncEngine(db_session)
+            leagues = await engine.sync_leagues(user.id, account, 2025)
+
+        league = leagues[0]
+
+        # Set up user_league with platform_team_id
+        result = await db_session.execute(
+            select(UserLeague).where(UserLeague.league_id == league.id)
+        )
+        ul = result.scalar_one()
+        ul.platform_team_id = "sleeper123"
+        await db_session.flush()
+
+        mock_adapter.get_transactions.return_value = [
+            PlatformTransaction(
+                type="add",
+                player_ids_added=["p1"],
+                player_ids_dropped=[],
+                roster_ids=["sleeper123"],
+                timestamp=1700000000000,
+            ),
+            PlatformTransaction(
+                type="add",
+                player_ids_added=["p2"],
+                player_ids_dropped=["p3"],
+                roster_ids=["sleeper123"],
+                timestamp=1700000001000,
+            ),
+        ]
+        mock_adapter.get_players_map.return_value = {}
+
+        with patch("app.sync.engine.get_adapter", return_value=mock_adapter):
+            engine = SyncEngine(db_session)
+            await engine.sync_transactions(league, user.id, week=1)
+
+        result = await db_session.execute(
+            select(Transaction).where(Transaction.league_id == league.id)
+        )
+        first_count = len(result.scalars().all())
+        assert first_count > 0
+
+        # Sync again — should delete and rebuild, not duplicate
+        with patch("app.sync.engine.get_adapter", return_value=mock_adapter):
+            engine = SyncEngine(db_session)
+            await engine.sync_transactions(league, user.id, week=1)
+
+        result = await db_session.execute(
+            select(Transaction).where(Transaction.league_id == league.id)
+        )
+        second_count = len(result.scalars().all())
+        assert second_count == first_count
 
 
 class TestSyncAll:
