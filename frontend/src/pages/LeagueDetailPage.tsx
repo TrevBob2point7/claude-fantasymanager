@@ -132,6 +132,20 @@ function RosterTab({
 }) {
   const [adpPlayer, setAdpPlayer] = useState<RosterPlayer | null>(null);
 
+  const POSITION_ORDER: Record<string, number> = {
+    QB: 0, RB: 1, WR: 2, TE: 3, DEF: 4, K: 5,
+  };
+
+  const sorted = [...roster].sort((a, b) => {
+    const aOrder = POSITION_ORDER[a.position] ?? 99;
+    const bOrder = POSITION_ORDER[b.position] ?? 99;
+    if (aOrder !== bOrder) return aOrder - bOrder;
+    // Within same position, sort by ADP (lowest first), nulls last
+    const aAdp = a.adp ? parseFloat(a.adp) : Infinity;
+    const bAdp = b.adp ? parseFloat(b.adp) : Infinity;
+    return aAdp - bAdp;
+  });
+
   if (roster.length === 0) {
     return <p className="py-8 text-center text-text-secondary">No roster data available.</p>;
   }
@@ -167,7 +181,7 @@ function RosterTab({
             </tr>
           </thead>
           <tbody>
-            {roster.map((player) => (
+            {sorted.map((player) => (
               <tr key={player.id} className="border-b border-border last:border-0">
                 <td className="px-4 py-3 font-medium text-text-primary">{player.player_name}</td>
                 <td className="px-4 py-3 text-text-secondary">{player.position}</td>
