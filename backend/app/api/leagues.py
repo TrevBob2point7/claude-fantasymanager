@@ -191,15 +191,24 @@ async def get_league_detail(
         )
         rosters = result.scalars().all()
 
-        # Fetch ADP data for roster players (best available for the league's season)
+        # Fetch ADP data for roster players using the most recent available season
         player_ids = [r.player_id for r in rosters if r.player_id]
         adp_by_player: dict = {}
         if player_ids:
+            # Find the best ADP season: prefer league season, fall back to latest
+            season_result = await db.execute(
+                select(PlayerADP.season)
+                .where(PlayerADP.player_id.in_(player_ids))
+                .order_by(sa.func.abs(PlayerADP.season - league.season))
+                .limit(1)
+            )
+            adp_season = season_result.scalar_one_or_none() or league.season
+
             adp_query = (
                 select(PlayerADP.player_id, sa.func.min(PlayerADP.adp))
                 .where(
                     PlayerADP.player_id.in_(player_ids),
-                    PlayerADP.season == league.season,
+                    PlayerADP.season == adp_season,
                 )
             )
             if adp_format:

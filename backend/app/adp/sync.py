@@ -58,7 +58,8 @@ class ADPSyncService:
                         continue
 
                     try:
-                        await self._upsert_adp(player_id, record, season)
+                        async with self.db.begin_nested():
+                            await self._upsert_adp(player_id, record, season)
                         synced += 1
                     except Exception:
                         logger.exception(
@@ -67,8 +68,6 @@ class ADPSyncService:
                             record.source,
                         )
                         errored += 1
-
-                await self.db.flush()
 
         await self.db.commit()
         logger.info(
@@ -119,6 +118,10 @@ class ADPSyncService:
         record: ADPRecord,
         season: int,
     ) -> None:
+        # Cap ADP at 999999.99 (column is NUMERIC(8,2)); some sources use
+        # sentinel values like 9999999 for undrafted players.
+        adp_value = min(record.adp, 999999.99)
+
         stmt = (
             pg_insert(PlayerADP)
             .values(
@@ -126,13 +129,13 @@ class ADPSyncService:
                 source=record.source,
                 format=record.format,
                 season=season,
-                adp=record.adp,
+                adp=adp_value,
                 position_rank=record.position_rank,
             )
             .on_conflict_do_update(
                 index_elements=["player_id", "source", "format", "season"],
                 set_={
-                    "adp": record.adp,
+                    "adp": adp_value,
                     "position_rank": record.position_rank,
                 },
             )
