@@ -167,6 +167,19 @@ class SyncEngine:
                 ul.platform_team_id: ul for ul in user_leagues if ul.platform_team_id
             }
 
+            # Collect user_league IDs that will be refreshed
+            ul_ids_to_refresh = []
+            for pr in platform_rosters:
+                ul = ul_by_platform_id.get(pr.owner_id)
+                if ul is not None:
+                    ul_ids_to_refresh.append(ul.id)
+
+            # Delete existing roster rows for affected user_leagues
+            if ul_ids_to_refresh:
+                await self.db.execute(
+                    sa.delete(Roster).where(Roster.user_league_id.in_(ul_ids_to_refresh))
+                )
+
             for pr in platform_rosters:
                 ul = ul_by_platform_id.get(pr.owner_id)
                 if ul is None:
@@ -190,19 +203,11 @@ class SyncEngine:
                     if player_id_str in pr.starters:
                         slot = "STARTER"
 
-                    stmt = (
-                        pg_insert(Roster)
-                        .values(
-                            user_league_id=ul.id,
-                            player_id=player.id,
-                            slot=slot,
-                        )
-                        .on_conflict_do_update(
-                            index_elements=["user_league_id", "player_id"],
-                            set_={"slot": slot},
-                        )
-                    )
-                    await self.db.execute(stmt)
+                    self.db.add(Roster(
+                        user_league_id=ul.id,
+                        player_id=player.id,
+                        slot=slot,
+                    ))
 
             await self.db.flush()
             await self._log_complete(log)
