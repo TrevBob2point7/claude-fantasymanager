@@ -204,6 +204,8 @@ class SyncEngine:
                     slot = None
                     if player_id_str in pr.starters:
                         slot = "STARTER"
+                    elif player_id_str in pr.taxi:
+                        slot = "TAXI"
 
                     self.db.add(Roster(
                         user_league_id=ul.id,

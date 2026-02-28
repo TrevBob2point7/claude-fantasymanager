@@ -24,6 +24,7 @@ class PlatformRosterEntry:
     owner_id: str  # platform roster_id / owner_id
     player_ids: list[str] = field(default_factory=list)
     starters: list[str] = field(default_factory=list)
+    taxi: list[str] = field(default_factory=list)
 
 
 @dataclass

@@ -84,6 +84,7 @@ class SleeperAdapter(PlatformAdapter):
                     owner_id=str(r.get("owner_id", r.get("roster_id", ""))),
                     player_ids=[str(p) for p in (r.get("players") or [])],
                     starters=[str(p) for p in (r.get("starters") or [])],
+                    taxi=[str(p) for p in (r.get("taxi") or [])],
                 )
                 for r in data
             ]
