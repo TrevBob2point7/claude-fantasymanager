@@ -16,15 +16,6 @@ async function request<T>(
 
   const res = await fetch(`${BASE_URL}${path}`, { ...options, headers });
 
-  if (res.status === 401) {
-    const hadToken = !!token;
-    localStorage.removeItem("token");
-    if (hadToken) {
-      window.location.href = "/login";
-    }
-    throw new Error("Invalid email or password");
-  }
-
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     const detail = (body as { detail?: string | Array<{ msg: string }> })
@@ -35,6 +26,18 @@ async function request<T>(
     } else {
       message = detail ?? `Request failed: ${res.status}`;
     }
+
+    if (res.status === 401) {
+      const hadToken = !!token;
+      localStorage.removeItem("token");
+      if (hadToken) {
+        window.location.href = "/login";
+      }
+      if (path === "/auth/login") {
+        throw new Error("Invalid email or password");
+      }
+    }
+
     throw new Error(message);
   }
 
