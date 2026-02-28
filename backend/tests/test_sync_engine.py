@@ -195,8 +195,9 @@ class TestSyncMatchups:
         result = await db_session.execute(select(Matchup))
         matchups = result.scalars().all()
         assert len(matchups) == 1
-        assert float(matchups[0].home_score) == 120.5
-        assert float(matchups[0].away_score) == 115.3
+        # Home/away assigned by sorted roster_id: "opponent1" < "sleeper123"
+        assert float(matchups[0].home_score) == 115.3
+        assert float(matchups[0].away_score) == 120.5
 
 
 class TestSyncStandings:

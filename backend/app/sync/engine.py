@@ -2,7 +2,7 @@ import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -233,6 +233,7 @@ class SyncEngine:
             for _matchup_id, entries in groups.items():
                 if len(entries) < 2:
                     continue
+                entries.sort(key=lambda e: e.roster_id)
                 home = entries[0]
                 away = entries[1]
 
@@ -246,8 +247,16 @@ class SyncEngine:
                     select(Matchup).where(
                         Matchup.league_id == league.id,
                         Matchup.week == week,
-                        Matchup.home_user_league_id == home_ul.id,
-                        Matchup.away_user_league_id == away_ul.id,
+                        or_(
+                            and_(
+                                Matchup.home_user_league_id == home_ul.id,
+                                Matchup.away_user_league_id == away_ul.id,
+                            ),
+                            and_(
+                                Matchup.home_user_league_id == away_ul.id,
+                                Matchup.away_user_league_id == home_ul.id,
+                            ),
+                        ),
                     )
                 )
                 matchup = existing.scalar_one_or_none()
