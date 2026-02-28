@@ -23,6 +23,12 @@ class PlayerADPRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class BatchADPRequest(BaseModel):
+    player_ids: list[UUID]
+    season: int
+    format: str | None = None
+
+
 class ADPSyncResponse(BaseModel):
     synced: int
     skipped: int

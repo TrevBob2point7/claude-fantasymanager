@@ -21,6 +21,18 @@ export interface PlayerADPHistory {
   position_rank: number | null;
 }
 
+export function getRosterADP(
+  playerIds: string[],
+  season: number,
+  format?: string,
+): Promise<Record<string, string | null>> {
+  return post<Record<string, string | null>>("/adp/batch", {
+    player_ids: playerIds,
+    season,
+    format: format || undefined,
+  });
+}
+
 export function getPlayerADPHistory(
   playerId: string,
   format?: string,

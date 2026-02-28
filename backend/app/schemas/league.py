@@ -56,7 +56,6 @@ class RosterEntryRead(BaseModel):
     position: str | None
     team: str | None
     slot: str | None
-    adp: Decimal | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

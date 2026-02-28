@@ -6,9 +6,8 @@ export function getLeagues(season?: number): Promise<League[]> {
   return get<League[]>(`/leagues${query}`);
 }
 
-export function getLeagueDetail(leagueId: string, adpFormat?: string): Promise<LeagueDetail> {
-  const query = adpFormat ? `?adp_format=${adpFormat}` : "";
-  return get<LeagueDetail>(`/leagues/${leagueId}${query}`);
+export function getLeagueDetail(leagueId: string): Promise<LeagueDetail> {
+  return get<LeagueDetail>(`/leagues/${leagueId}`);
 }
 
 export function discoverLeagues(

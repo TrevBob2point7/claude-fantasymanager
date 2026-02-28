@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
 import { getLeagueDetail } from "../api/leagues";
+import { getRosterADP } from "../api/adp";
 import type { LeagueDetail, RosterPlayer } from "../api/types";
 import PlayerADPModal from "../components/PlayerADPModal";
 
@@ -30,17 +31,32 @@ export default function LeagueDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("roster");
   const [adpFormat, setAdpFormat] = useState("");
+  const [adpMap, setAdpMap] = useState<Record<string, string | null>>({});
 
+  // Fetch league detail once
   useEffect(() => {
     if (!leagueId) return;
     setLoading(true);
-    getLeagueDetail(leagueId, adpFormat || undefined)
+    getLeagueDetail(leagueId)
       .then(setLeague)
       .catch((err) =>
         setError(err instanceof Error ? err.message : "Failed to load league"),
       )
       .finally(() => setLoading(false));
-  }, [leagueId, adpFormat]);
+  }, [leagueId]);
+
+  // Fetch ADP separately — depends on roster player IDs and format
+  const playerIds = useMemo(
+    () => league?.roster.map((p) => p.player_id) ?? [],
+    [league?.roster],
+  );
+
+  useEffect(() => {
+    if (playerIds.length === 0 || !league) return;
+    getRosterADP(playerIds, league.season, adpFormat || undefined)
+      .then(setAdpMap)
+      .catch(() => setAdpMap({}));
+  }, [playerIds, league?.season, adpFormat]);
 
   if (loading) {
     return (
@@ -107,6 +123,7 @@ export default function LeagueDetailPage() {
         {activeTab === "roster" && (
           <RosterTab
             roster={league.roster}
+            adpMap={adpMap}
             adpFormat={adpFormat}
             onAdpFormatChange={setAdpFormat}
           />
@@ -121,30 +138,100 @@ export default function LeagueDetailPage() {
   );
 }
 
+const POSITION_ORDER: Record<string, number> = {
+  QB: 0, RB: 1, WR: 2, TE: 3, DEF: 4, K: 5,
+};
+
+function sortByPosition(
+  players: RosterPlayer[],
+  adpMap: Record<string, string | null>,
+): RosterPlayer[] {
+  return [...players].sort((a, b) => {
+    const aOrder = POSITION_ORDER[a.position] ?? 99;
+    const bOrder = POSITION_ORDER[b.position] ?? 99;
+    if (aOrder !== bOrder) return aOrder - bOrder;
+    const aAdp = adpMap[a.player_id] ? parseFloat(adpMap[a.player_id]!) : Infinity;
+    const bAdp = adpMap[b.player_id] ? parseFloat(adpMap[b.player_id]!) : Infinity;
+    return aAdp - bAdp;
+  });
+}
+
+function RosterTable({
+  players,
+  adpMap,
+  onPlayerClick,
+}: {
+  players: RosterPlayer[];
+  adpMap: Record<string, string | null>;
+  onPlayerClick: (player: RosterPlayer) => void;
+}) {
+  return (
+    <div className="overflow-x-auto rounded-xl border border-border">
+      <table className="w-full table-fixed text-sm">
+        <colgroup>
+          <col className="w-[45%]" />
+          <col className="w-[15%]" />
+          <col className="w-[20%]" />
+          <col className="w-[20%]" />
+        </colgroup>
+        <thead>
+          <tr className="border-b border-border bg-surface">
+            <th className="px-4 py-3 text-left font-medium text-text-secondary">Player</th>
+            <th className="px-4 py-3 text-left font-medium text-text-secondary">Pos</th>
+            <th className="px-4 py-3 text-left font-medium text-text-secondary">Team</th>
+            <th className="px-4 py-3 text-right font-medium text-text-secondary">ADP</th>
+          </tr>
+        </thead>
+        <tbody>
+          {players.map((player) => {
+            const adp = adpMap[player.player_id];
+            return (
+              <tr key={player.id} className="border-b border-border last:border-0">
+                <td className="px-4 py-3 font-medium text-text-primary">{player.player_name}</td>
+                <td className="px-4 py-3 text-text-secondary">{player.position}</td>
+                <td className="px-4 py-3 text-text-secondary">{player.team}</td>
+                <td className="px-4 py-3 text-right">
+                  {adp ? (
+                    <button
+                      onClick={() => onPlayerClick(player)}
+                      className="font-score text-accent hover:underline"
+                    >
+                      {adp}
+                    </button>
+                  ) : (
+                    <span className="text-text-secondary">—</span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function RosterTab({
   roster,
+  adpMap,
   adpFormat,
   onAdpFormatChange,
 }: {
   roster: LeagueDetail["roster"];
+  adpMap: Record<string, string | null>;
   adpFormat: string;
   onAdpFormatChange: (format: string) => void;
 }) {
   const [adpPlayer, setAdpPlayer] = useState<RosterPlayer | null>(null);
 
-  const POSITION_ORDER: Record<string, number> = {
-    QB: 0, RB: 1, WR: 2, TE: 3, DEF: 4, K: 5,
-  };
-
-  const sorted = [...roster].sort((a, b) => {
-    const aOrder = POSITION_ORDER[a.position] ?? 99;
-    const bOrder = POSITION_ORDER[b.position] ?? 99;
-    if (aOrder !== bOrder) return aOrder - bOrder;
-    // Within same position, sort by ADP (lowest first), nulls last
-    const aAdp = a.adp ? parseFloat(a.adp) : Infinity;
-    const bAdp = b.adp ? parseFloat(b.adp) : Infinity;
-    return aAdp - bAdp;
-  });
+  const mainRoster = sortByPosition(
+    roster.filter((p) => p.slot !== "TAXI"),
+    adpMap,
+  );
+  const taxiSquad = sortByPosition(
+    roster.filter((p) => p.slot === "TAXI"),
+    adpMap,
+  );
 
   if (roster.length === 0) {
     return <p className="py-8 text-center text-text-secondary">No roster data available.</p>;
@@ -169,41 +256,18 @@ function RosterTab({
           </button>
         ))}
       </div>
-      <div className="overflow-x-auto rounded-xl border border-border">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border bg-surface">
-              <th className="px-4 py-3 text-left font-medium text-text-secondary">Player</th>
-              <th className="px-4 py-3 text-left font-medium text-text-secondary">Pos</th>
-              <th className="px-4 py-3 text-left font-medium text-text-secondary">Team</th>
-              <th className="px-4 py-3 text-left font-medium text-text-secondary">Slot</th>
-              <th className="px-4 py-3 text-right font-medium text-text-secondary">ADP</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((player) => (
-              <tr key={player.id} className="border-b border-border last:border-0">
-                <td className="px-4 py-3 font-medium text-text-primary">{player.player_name}</td>
-                <td className="px-4 py-3 text-text-secondary">{player.position}</td>
-                <td className="px-4 py-3 text-text-secondary">{player.team}</td>
-                <td className="px-4 py-3 text-text-secondary">{player.slot ?? "—"}</td>
-                <td className="px-4 py-3 text-right">
-                  {player.adp ? (
-                    <button
-                      onClick={() => setAdpPlayer(player)}
-                      className="font-score text-accent hover:underline"
-                    >
-                      {player.adp}
-                    </button>
-                  ) : (
-                    <span className="text-text-secondary">—</span>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+
+      <RosterTable players={mainRoster} adpMap={adpMap} onPlayerClick={setAdpPlayer} />
+
+      {taxiSquad.length > 0 && (
+        <>
+          <h3 className="mt-6 mb-3 font-heading text-lg font-semibold text-text-primary">
+            Taxi Squad
+          </h3>
+          <RosterTable players={taxiSquad} adpMap={adpMap} onPlayerClick={setAdpPlayer} />
+        </>
+      )}
+
       {adpPlayer && (
         <PlayerADPModal
           playerId={adpPlayer.player_id}

@@ -76,7 +76,6 @@ export interface RosterPlayer {
   position: string;
   team: string;
   slot: string | null;
-  adp: string | null;
 }
 
 export interface Matchup {

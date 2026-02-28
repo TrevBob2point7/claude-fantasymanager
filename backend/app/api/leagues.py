@@ -3,14 +3,13 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.auth import get_current_user
 from app.core.database import get_db
-from app.models import League, Matchup, PlatformAccount, PlayerADP, Roster, Standing, Transaction, UserLeague
+from app.models import League, Matchup, PlatformAccount, Roster, Standing, Transaction, UserLeague
 from app.models.user import User
 from app.platforms.registry import get_adapter
 from app.schemas.league import (
@@ -134,7 +133,6 @@ async def list_leagues(
 @router.get("/{league_id}", response_model=LeagueDetailRead)
 async def get_league_detail(
     league_id: UUID,
-    adp_format: str | None = Query(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -190,33 +188,6 @@ async def get_league_detail(
             .where(Roster.user_league_id == user_league.id)
         )
         rosters = result.scalars().all()
-
-        # Fetch ADP data for roster players using the most recent available season
-        player_ids = [r.player_id for r in rosters if r.player_id]
-        adp_by_player: dict = {}
-        if player_ids:
-            # Find the best ADP season: prefer league season, fall back to latest
-            season_result = await db.execute(
-                select(PlayerADP.season)
-                .where(PlayerADP.player_id.in_(player_ids))
-                .order_by(sa.func.abs(PlayerADP.season - league.season))
-                .limit(1)
-            )
-            adp_season = season_result.scalar_one_or_none() or league.season
-
-            adp_query = (
-                select(PlayerADP.player_id, sa.func.min(PlayerADP.adp))
-                .where(
-                    PlayerADP.player_id.in_(player_ids),
-                    PlayerADP.season == adp_season,
-                )
-            )
-            if adp_format:
-                adp_query = adp_query.where(PlayerADP.format == adp_format)
-            adp_query = adp_query.group_by(PlayerADP.player_id)
-            adp_result = await db.execute(adp_query)
-            adp_by_player = dict(adp_result.all())
-
         roster_entries = [
             RosterEntryRead(
                 id=r.id,
@@ -225,7 +196,6 @@ async def get_league_detail(
                 position=r.player.position.value if r.player and r.player.position else None,
                 team=r.player.team if r.player else None,
                 slot=r.slot,
-                adp=adp_by_player.get(r.player_id),
             )
             for r in rosters
         ]
