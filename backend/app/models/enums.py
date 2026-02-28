@@ -53,6 +53,21 @@ class SyncStatus(enum.StrEnum):
     failed = "failed"
 
 
+class LeagueType(enum.StrEnum):
+    redraft = "redraft"
+    keeper = "keeper"
+    dynasty = "dynasty"
+
+
+class ADPFormat(enum.StrEnum):
+    standard = "standard"
+    half_ppr = "half_ppr"
+    ppr = "ppr"
+    superflex = "superflex"
+    dynasty = "dynasty"
+    two_qb = "two_qb"
+
+
 class DataType(enum.StrEnum):
     leagues = "leagues"
     rosters = "rosters"
