@@ -58,6 +58,8 @@ def start_scheduler() -> None:
         id="sync_all_users",
         replace_existing=True,
     )
+    if scheduler.running:
+        return
     scheduler.start()
     logger.info(
         "Background sync scheduler started (interval=%d minutes)",
