@@ -458,7 +458,7 @@ class SyncEngine:
 
                     txn = Transaction(
                         league_id=league.id,
-                        type=TransactionType.drop,
+                        type=tx_type,
                         week=week,
                         player_id=player.id,
                         from_user_league_id=from_ul.id if from_ul else None,
