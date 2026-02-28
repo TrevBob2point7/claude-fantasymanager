@@ -6,6 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 An all-in-one fantasy football manager application — React SPA frontend + FastAPI backend + PostgreSQL, all running in Docker Compose.
 
+## Product Spec
+
+See [docs/PRODUCT.md](docs/PRODUCT.md) for product vision, supported league types, scoring formats, data source decisions, and known gaps.
+
+## Data Model
+
+See [docs/DATA_MODEL.md](docs/DATA_MODEL.md) for the complete database schema, enums, indexes, and relationships. **This document must be kept in sync with the codebase** — update it whenever SQLAlchemy models, enums, or migrations change.
+
 ## Tech Stack
 
 - **Frontend:** React 19, TypeScript, Vite 6
