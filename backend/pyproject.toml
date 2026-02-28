@@ -11,8 +11,11 @@ dependencies = [
     "alembic>=1.14",
     "python-jose[cryptography]>=3.3",
     "passlib[bcrypt]>=1.7",
+    "bcrypt>=4.0,<4.1",
     "pydantic-settings>=2.7",
     "httpx>=0.28",
+    "email-validator>=2.0",
+    "apscheduler>=3.10,<4",
 ]
 
 [project.optional-dependencies]
@@ -32,6 +35,7 @@ packages = ["app"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
 
 [tool.ruff]
@@ -52,6 +56,12 @@ select = [
 
 [tool.ruff.lint.per-file-ignores]
 "app/api/**" = ["B008"]  # Allow Depends() in function defaults (FastAPI pattern)
+"app/auth/**" = ["B008"]  # Allow Depends() in function defaults (FastAPI pattern)
 
 [tool.ruff.format]
 quote-style = "double"
+
+[dependency-groups]
+dev = [
+    "respx>=0.22.0",
+]
