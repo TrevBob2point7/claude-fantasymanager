@@ -1,4 +1,15 @@
-import { get } from "./client";
+import { get, post } from "./client";
+
+export interface ADPSyncResult {
+  synced: number;
+  skipped: number;
+  errored: number;
+}
+
+export function syncADP(season?: number): Promise<ADPSyncResult> {
+  const query = season ? `?season=${season}` : "";
+  return post<ADPSyncResult>(`/adp/sync${query}`);
+}
 
 export interface PlayerADPHistory {
   id: string;
