@@ -40,8 +40,8 @@ export interface DiscoveredLeague {
   platform_league_id: string;
   name: string;
   season: number;
-  roster_size: number;
-  scoring_type: string;
+  roster_size: number | null;
+  scoring_type: string | null;
   already_linked: boolean;
 }
 
@@ -51,15 +51,15 @@ export interface League {
   platform_league_id: string;
   name: string;
   season: number;
-  roster_size: number;
-  scoring_type: string;
-  team_name: string;
+  roster_size: number | null;
+  scoring_type: string | null;
+  team_name: string | null;
   created_at: string;
 }
 
 export interface Standing {
   id: string;
-  team_name: string;
+  team_name: string | null;
   wins: number;
   losses: number;
   ties: number;
@@ -73,14 +73,14 @@ export interface RosterPlayer {
   player_name: string;
   position: string;
   team: string;
-  slot: string;
+  slot: string | null;
 }
 
 export interface Matchup {
   id: string;
   week: number;
-  home_team_name: string;
-  away_team_name: string;
+  home_team_name: string | null;
+  away_team_name: string | null;
   home_score: string;
   away_score: string;
 }

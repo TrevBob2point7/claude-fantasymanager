@@ -221,8 +221,8 @@ export default function LinkAccountsPage() {
               <div>
                 <p className="font-medium text-text-primary">{league.name}</p>
                 <p className="text-sm text-text-secondary">
-                  {league.season} &middot; {league.scoring_type.toUpperCase()} &middot;{" "}
-                  {league.roster_size} roster spots
+                  {league.season} &middot; {league.scoring_type?.toUpperCase() ?? "—"} &middot;{" "}
+                  {league.roster_size ?? "—"} roster spots
                 </p>
               </div>
               {league.already_linked && (

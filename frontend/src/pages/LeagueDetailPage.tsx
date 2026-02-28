@@ -63,8 +63,8 @@ export default function LeagueDetailPage() {
           {league.name}
         </h1>
         <p className="mt-1 text-text-secondary">
-          {league.season} &middot; {league.scoring_type.toUpperCase()} &middot;{" "}
-          {league.roster_size} roster spots &middot; {league.team_name}
+          {league.season} &middot; {league.scoring_type?.toUpperCase() ?? "—"} &middot;{" "}
+          {league.roster_size ?? "—"} roster spots &middot; {league.team_name ?? "My Team"}
         </p>
       </div>
 
@@ -122,7 +122,7 @@ function RosterTab({ roster }: { roster: LeagueDetail["roster"] }) {
               <td className="px-4 py-3 font-medium text-text-primary">{player.player_name}</td>
               <td className="px-4 py-3 text-text-secondary">{player.position}</td>
               <td className="px-4 py-3 text-text-secondary">{player.team}</td>
-              <td className="px-4 py-3 text-text-secondary">{player.slot}</td>
+              <td className="px-4 py-3 text-text-secondary">{player.slot ?? "—"}</td>
             </tr>
           ))}
         </tbody>
@@ -156,7 +156,7 @@ function StandingsTab({ standings }: { standings: LeagueDetail["standings"] }) {
           {sorted.map((s) => (
             <tr key={s.id} className="border-b border-border last:border-0">
               <td className="px-4 py-3 font-score text-lg font-semibold text-accent">{s.rank}</td>
-              <td className="px-4 py-3 font-medium text-text-primary">{s.team_name}</td>
+              <td className="px-4 py-3 font-medium text-text-primary">{s.team_name ?? "—"}</td>
               <td className="px-4 py-3 text-right text-text-primary">{s.wins}</td>
               <td className="px-4 py-3 text-right text-text-primary">{s.losses}</td>
               <td className="px-4 py-3 text-right text-text-secondary">{s.ties}</td>
@@ -185,12 +185,12 @@ function MatchupsTab({ matchups }: { matchups: LeagueDetail["recent_matchups"] }
           <p className="mb-2 text-xs font-medium text-text-secondary">Week {m.week}</p>
           <div className="flex items-center justify-between">
             <div className="flex-1">
-              <p className="font-medium text-text-primary">{m.home_team_name}</p>
+              <p className="font-medium text-text-primary">{m.home_team_name ?? "TBD"}</p>
               <p className="font-score text-xl font-semibold text-accent">{m.home_score}</p>
             </div>
             <span className="px-4 text-sm text-text-secondary">vs</span>
             <div className="flex-1 text-right">
-              <p className="font-medium text-text-primary">{m.away_team_name}</p>
+              <p className="font-medium text-text-primary">{m.away_team_name ?? "TBD"}</p>
               <p className="font-score text-xl font-semibold text-accent">{m.away_score}</p>
             </div>
           </div>
