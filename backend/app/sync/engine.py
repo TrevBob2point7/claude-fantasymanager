@@ -612,6 +612,18 @@ class SyncEngine:
                 errors.append(f"standings({league.name}): {e}")
                 logger.exception("Failed to sync standings for league %s", league.id)
 
+        # Sync bye weeks if no data exists for this season
+        try:
+            existing = await self.db.execute(
+                select(TeamByeWeek).where(TeamByeWeek.season == season).limit(1)
+            )
+            if existing.scalar_one_or_none() is None:
+                await sync_bye_weeks(self.db, season)
+                synced.append("bye_weeks")
+        except Exception as e:
+            errors.append(f"bye_weeks: {e}")
+            logger.exception("Failed to sync bye weeks for season %d", season)
+
         await self.db.commit()
         return {
             "status": "completed",
