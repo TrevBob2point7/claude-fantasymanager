@@ -626,9 +626,25 @@ class SyncEngine:
                     League.platform_league_id == prev_league_id,
                 )
             )
-            if result.scalar_one_or_none() is not None:
-                # Already synced — stop walking
-                break
+            existing_league = result.scalar_one_or_none()
+            if existing_league is not None:
+                # League exists — re-sync matchups to backfill any missing data
+                hist_settings = existing_league.settings_json or {}
+                hist_week = hist_settings.get("leg", 17)
+                for week in range(1, min(hist_week + 1, 19)):
+                    try:
+                        await self.sync_matchups(
+                            existing_league, user_id, week, players_map=players_map
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to re-sync matchups week %d for historical league %s",
+                            week,
+                            prev_league_id,
+                        )
+                # Continue walking the chain to backfill older seasons too
+                prev_league_id = existing_league.previous_league_id
+                continue
 
             # Courtesy delay between API calls
             await asyncio.sleep(0.05)
