@@ -826,12 +826,17 @@ function MatchupsTab({ matchups, teamName }: { matchups: LeagueDetail["recent_ma
         const isHome = teamName != null && m.home_team_name === teamName;
         const myScore = parseFloat(isHome ? m.home_score : m.away_score);
         const oppScore = parseFloat(isHome ? m.away_score : m.home_score);
-        const oppName = (isHome ? m.away_team_name : m.home_team_name) ?? "TBD";
         const won = myScore > oppScore;
         const tied = myScore === oppScore;
         const played = myScore > 0 || oppScore > 0;
         const expanded = expandedId === m.id;
         const hasStarters = m.home_starters != null || m.away_starters != null;
+
+        // Left = away, right = home — matches expanded roster column order
+        const leftTeam = m.away_team_name ?? "Away";
+        const rightTeam = m.home_team_name ?? "Home";
+        const leftScore = parseFloat(m.away_score);
+        const rightScore = parseFloat(m.home_score);
 
         return (
           <div
@@ -851,44 +856,48 @@ function MatchupsTab({ matchups, teamName }: { matchups: LeagueDetail["recent_ma
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <p className="text-xs font-medium text-text-secondary">Week {m.week}</p>
-                  {hasStarters && (
-                    <span className="text-xs text-text-secondary">{expanded ? "▲" : "▼"}</span>
+                  {played && (
+                    <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
+                      won ? "bg-accent-green/15 text-accent-green" :
+                      tied ? "bg-surface-hover text-text-secondary" :
+                      "bg-destructive/15 text-destructive"
+                    }`}>
+                      {won ? "W" : tied ? "T" : "L"}
+                    </span>
                   )}
                 </div>
-                {played && (
-                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
-                    won ? "bg-accent-green/15 text-accent-green" :
-                    tied ? "bg-surface-hover text-text-secondary" :
-                    "bg-destructive/15 text-destructive"
-                  }`}>
-                    {won ? "W" : tied ? "T" : "L"}
-                  </span>
+                {hasStarters && (
+                  <span className="text-xs text-text-secondary">{expanded ? "▲" : "▼"}</span>
                 )}
               </div>
-              <div className="mt-2 flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-text-secondary">vs</p>
-                  <p className="font-medium text-text-primary">{oppName}</p>
-                </div>
-                <div className="text-right">
-                  <p className={`font-score text-xl font-bold ${
-                    !played ? "text-text-secondary" :
-                    won ? "text-accent-green" : tied ? "text-text-primary" : "text-destructive"
+              <div className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                <div className="flex items-center justify-between min-w-0">
+                  <span className="truncate font-medium text-text-primary">{leftTeam}</span>
+                  <span className={`ml-2 shrink-0 font-score text-lg font-bold ${
+                    leftScore > rightScore ? "text-accent-green" :
+                    leftScore < rightScore ? "text-destructive" :
+                    "text-text-primary"
                   }`}>
-                    {myScore.toFixed(1)}
-                  </p>
-                  <p className="font-score text-sm text-text-secondary">
-                    {oppScore.toFixed(1)}
-                  </p>
+                    {leftScore.toFixed(1)}
+                  </span>
+                </div>
+                <span className="text-xs text-text-secondary">vs</span>
+                <div className="flex items-center justify-between min-w-0">
+                  <span className={`shrink-0 font-score text-lg font-bold ${
+                    rightScore > leftScore ? "text-accent-green" :
+                    rightScore < leftScore ? "text-destructive" :
+                    "text-text-primary"
+                  }`}>
+                    {rightScore.toFixed(1)}
+                  </span>
+                  <span className="truncate text-right font-medium text-text-primary ml-2">{rightTeam}</span>
                 </div>
               </div>
             </button>
             {expanded && hasStarters && (
               <MatchupStarters
-                homeTeam={m.home_team_name}
-                awayTeam={m.away_team_name}
-                homeStarters={m.home_starters}
-                awayStarters={m.away_starters}
+                leftStarters={m.away_starters}
+                rightStarters={m.home_starters}
               />
             )}
           </div>
@@ -899,96 +908,77 @@ function MatchupsTab({ matchups, teamName }: { matchups: LeagueDetail["recent_ma
 }
 
 function MatchupStarters({
-  homeTeam,
-  awayTeam,
-  homeStarters,
-  awayStarters,
+  leftStarters,
+  rightStarters,
 }: {
-  homeTeam: string | null;
-  awayTeam: string | null;
-  homeStarters: MatchupPlayer[] | null;
-  awayStarters: MatchupPlayer[] | null;
+  leftStarters: MatchupPlayer[] | null;
+  rightStarters: MatchupPlayer[] | null;
 }) {
-  // Build slot-level winner map: index → "home" | "away" | "tie" | null
-  const slotResults: Map<number, "home" | "away" | "tie"> = new Map();
-  if (homeStarters && awayStarters) {
-    const len = Math.min(homeStarters.length, awayStarters.length);
+  // Build slot-level winner map: index → "left" | "right" | "tie"
+  const slotResults: Map<number, "left" | "right" | "tie"> = new Map();
+  if (leftStarters && rightStarters) {
+    const len = Math.min(leftStarters.length, rightStarters.length);
     for (let i = 0; i < len; i++) {
-      const hp = homeStarters[i].points;
-      const ap = awayStarters[i].points;
-      if (hp != null && ap != null) {
-        if (hp > ap) slotResults.set(i, "home");
-        else if (ap > hp) slotResults.set(i, "away");
+      const lp = leftStarters[i].points;
+      const rp = rightStarters[i].points;
+      if (lp != null && rp != null) {
+        if (lp > rp) slotResults.set(i, "left");
+        else if (rp > lp) slotResults.set(i, "right");
         else slotResults.set(i, "tie");
       }
     }
   }
 
+  const maxLen = Math.max(
+    leftStarters?.length ?? 0,
+    rightStarters?.length ?? 0,
+  );
+
   return (
     <div className="border-t border-border px-4 pb-4 pt-3">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <StarterColumn
-          label={homeTeam ?? "Home"}
-          starters={homeStarters}
-          slotResults={slotResults}
-          side="home"
-        />
-        <StarterColumn
-          label={awayTeam ?? "Away"}
-          starters={awayStarters}
-          slotResults={slotResults}
-          side="away"
-        />
-      </div>
-    </div>
-  );
-}
-
-function StarterColumn({
-  label,
-  starters,
-  slotResults,
-  side,
-}: {
-  label: string;
-  starters: MatchupPlayer[] | null;
-  slotResults: Map<number, "home" | "away" | "tie">;
-  side: "home" | "away";
-}) {
-  if (!starters || starters.length === 0) {
-    return (
-      <div>
-        <p className="mb-2 text-xs font-semibold uppercase text-text-secondary">{label}</p>
-        <p className="text-sm text-text-secondary">No starter data</p>
-      </div>
-    );
-  }
-
-  return (
-    <div>
-      <p className="mb-2 text-xs font-semibold uppercase text-text-secondary">{label}</p>
-      <div className="space-y-1">
-        {starters.map((s, i) => {
+      <div className="overflow-hidden rounded-lg border border-border">
+        {Array.from({ length: maxLen }, (_, i) => {
+          const ls = leftStarters?.[i];
+          const rs = rightStarters?.[i];
           const result = slotResults.get(i);
-          const won = result === side;
-          const lost = result != null && result !== "tie" && result !== side;
-          const pointsColor = won
-            ? "text-accent-green"
-            : lost
-              ? "text-destructive"
-              : "text-text-primary";
+          const rowBg = i % 2 === 0 ? "bg-surface" : "bg-surface-hover/50";
+
+          const leftWon = result === "left";
+          const leftLost = result === "right";
+          const rightWon = result === "right";
+          const rightLost = result === "left";
+
+          const leftPointsColor = leftWon ? "text-accent-green" : leftLost ? "text-destructive" : "text-text-primary";
+          const rightPointsColor = rightWon ? "text-accent-green" : rightLost ? "text-destructive" : "text-text-primary";
 
           return (
-            <div key={s.player_id} className="flex items-center justify-between text-sm">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="w-10 shrink-0 text-xs font-semibold text-text-secondary">
-                  {s.slot ?? s.position ?? ""}
+            <div key={i} className={`grid grid-cols-[1fr_auto_1fr] items-center gap-2 px-3 py-1.5 text-sm ${rowBg}`}>
+              {/* Left side: slot + name ... points */}
+              <div className="flex items-center justify-between min-w-0">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-10 shrink-0 text-xs font-semibold text-text-secondary">
+                    {ls?.slot ?? ls?.position ?? ""}
+                  </span>
+                  <span className="truncate text-text-primary">{ls?.name ?? ""}</span>
+                </div>
+                <span className={`ml-2 shrink-0 font-score ${leftPointsColor}`}>
+                  {ls?.points != null ? ls.points.toFixed(1) : "—"}
                 </span>
-                <span className="truncate text-text-primary">{s.name}</span>
               </div>
-              <span className={`ml-2 shrink-0 font-score ${pointsColor}`}>
-                {s.points != null ? s.points.toFixed(1) : "—"}
-              </span>
+              {/* Divider */}
+              <span className="text-border">|</span>
+              {/* Right side: points ... name + slot */}
+              <div className="flex items-center justify-between min-w-0">
+                <span className={`mr-2 shrink-0 font-score ${rightPointsColor}`}>
+                  {rs?.points != null ? rs.points.toFixed(1) : "—"}
+                </span>
+                <div className="flex items-center gap-2 min-w-0 justify-end">
+                  <span className="truncate text-text-primary">{rs?.name ?? ""}</span>
+                  <span className="w-10 shrink-0 text-right text-xs font-semibold text-text-secondary">
+                    {rs?.slot ?? rs?.position ?? ""}
+                  </span>
+                </div>
+              </div>
             </div>
           );
         })}
