@@ -21,7 +21,7 @@ class TestTriggerSync:
             user_id=user.id,
             platform_type=PlatformType.sleeper,
             platform_username="testuser",
-            platform_user_id="sleeper123",
+            platform_user_id="123456789",
         )
         db_session.add(account)
         await db_session.commit()
