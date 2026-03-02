@@ -1,11 +1,11 @@
 import logging
+from datetime import UTC, datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.database import async_session
-from app.core.season import get_current_nfl_season
 from app.models import PlatformAccount, User
 from app.sync.engine import SyncEngine
 
@@ -27,7 +27,7 @@ async def sync_all_users() -> None:
             logger.info("No platform accounts to sync")
             return
 
-        season = get_current_nfl_season()
+        season = datetime.now(UTC).year
         engine = SyncEngine(db)
 
         for account in accounts:

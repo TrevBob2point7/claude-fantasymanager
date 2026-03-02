@@ -1,4 +1,5 @@
 import logging
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -10,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.adp.sync import ADPSyncService
 from app.auth import get_current_user
 from app.core.database import get_db
-from app.core.season import get_current_nfl_season
 from app.models.enums import ADPFormat
 from app.models.player_adp import PlayerADP
 from app.models.user import User
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/api/adp", tags=["adp"])
 
 @router.post("/sync", response_model=ADPSyncResponse)
 async def sync_adp(
-    season: int = Query(default_factory=get_current_nfl_season),
+    season: int = Query(default_factory=lambda: datetime.now(UTC).year),
     sources: list[str] | None = Query(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
