@@ -331,9 +331,12 @@ async def get_league_seasons(
     current = league
     while current.previous_league_id:
         result = await db.execute(
-            select(League).where(
+            select(League)
+            .join(UserLeague, UserLeague.league_id == League.id)
+            .where(
                 League.platform_type == league.platform_type,
                 League.platform_league_id == current.previous_league_id,
+                UserLeague.user_id == current_user.id,
             )
         )
         prev = result.scalar_one_or_none()
@@ -346,9 +349,12 @@ async def get_league_seasons(
     current = league
     while True:
         result = await db.execute(
-            select(League).where(
+            select(League)
+            .join(UserLeague, UserLeague.league_id == League.id)
+            .where(
                 League.platform_type == league.platform_type,
                 League.previous_league_id == current.platform_league_id,
+                UserLeague.user_id == current_user.id,
             )
         )
         nxt = result.scalar_one_or_none()
