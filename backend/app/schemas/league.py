@@ -68,6 +68,7 @@ class MatchupPlayerRead(BaseModel):
     name: str
     position: str | None = None
     points: float | None = None
+    slot: str | None = None
 
 
 class MatchupRead(BaseModel):

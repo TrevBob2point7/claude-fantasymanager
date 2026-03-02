@@ -909,11 +909,36 @@ function MatchupStarters({
   homeStarters: MatchupPlayer[] | null;
   awayStarters: MatchupPlayer[] | null;
 }) {
+  // Build slot-level winner map: index → "home" | "away" | "tie" | null
+  const slotResults: Map<number, "home" | "away" | "tie"> = new Map();
+  if (homeStarters && awayStarters) {
+    const len = Math.min(homeStarters.length, awayStarters.length);
+    for (let i = 0; i < len; i++) {
+      const hp = homeStarters[i].points;
+      const ap = awayStarters[i].points;
+      if (hp != null && ap != null) {
+        if (hp > ap) slotResults.set(i, "home");
+        else if (ap > hp) slotResults.set(i, "away");
+        else slotResults.set(i, "tie");
+      }
+    }
+  }
+
   return (
     <div className="border-t border-border px-4 pb-4 pt-3">
       <div className="grid gap-4 sm:grid-cols-2">
-        <StarterColumn label={homeTeam ?? "Home"} starters={homeStarters} />
-        <StarterColumn label={awayTeam ?? "Away"} starters={awayStarters} />
+        <StarterColumn
+          label={homeTeam ?? "Home"}
+          starters={homeStarters}
+          slotResults={slotResults}
+          side="home"
+        />
+        <StarterColumn
+          label={awayTeam ?? "Away"}
+          starters={awayStarters}
+          slotResults={slotResults}
+          side="away"
+        />
       </div>
     </div>
   );
@@ -922,9 +947,13 @@ function MatchupStarters({
 function StarterColumn({
   label,
   starters,
+  slotResults,
+  side,
 }: {
   label: string;
   starters: MatchupPlayer[] | null;
+  slotResults: Map<number, "home" | "away" | "tie">;
+  side: "home" | "away";
 }) {
   if (!starters || starters.length === 0) {
     return (
@@ -939,21 +968,30 @@ function StarterColumn({
     <div>
       <p className="mb-2 text-xs font-semibold uppercase text-text-secondary">{label}</p>
       <div className="space-y-1">
-        {starters.map((s) => (
-          <div key={s.player_id} className="flex items-center justify-between text-sm">
-            <div className="flex items-center gap-2 min-w-0">
-              {s.position && (
-                <span className="w-7 shrink-0 text-xs font-semibold text-text-secondary">
-                  {s.position}
+        {starters.map((s, i) => {
+          const result = slotResults.get(i);
+          const won = result === side;
+          const lost = result != null && result !== "tie" && result !== side;
+          const pointsColor = won
+            ? "text-accent-green"
+            : lost
+              ? "text-destructive"
+              : "text-text-primary";
+
+          return (
+            <div key={s.player_id} className="flex items-center justify-between text-sm">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="w-10 shrink-0 text-xs font-semibold text-text-secondary">
+                  {s.slot ?? s.position ?? ""}
                 </span>
-              )}
-              <span className="truncate text-text-primary">{s.name}</span>
+                <span className="truncate text-text-primary">{s.name}</span>
+              </div>
+              <span className={`ml-2 shrink-0 font-score ${pointsColor}`}>
+                {s.points != null ? s.points.toFixed(1) : "—"}
+              </span>
             </div>
-            <span className="ml-2 shrink-0 font-score text-text-primary">
-              {s.points != null ? s.points.toFixed(1) : "—"}
-            </span>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

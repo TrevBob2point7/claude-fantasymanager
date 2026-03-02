@@ -86,6 +86,7 @@ export interface MatchupPlayer {
   name: string;
   position: string | null;
   points: number | null;
+  slot: string | null;
 }
 
 export interface Matchup {

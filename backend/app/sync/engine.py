@@ -298,22 +298,25 @@ class SyncEngine:
         self,
         pm: PlatformMatchupSchema,
         players_map: dict[str, dict],
+        starter_slots: list[str] | None = None,
     ) -> list[dict] | None:
         """Build starters JSON from a PlatformMatchup's starters data."""
         if not pm.starters:
             return None
         result = []
-        for pid in pm.starters:
+        for i, pid in enumerate(pm.starters):
             pdata = players_map.get(pid, {})
             name = (
                 f"{pdata.get('first_name', '')} {pdata.get('last_name', '')}".strip()
                 or pdata.get("full_name", "Unknown")
             )
+            slot = starter_slots[i] if starter_slots and i < len(starter_slots) else None
             result.append({
                 "player_id": pid,
                 "name": name,
                 "position": pdata.get("position"),
                 "points": pm.starters_points.get(pid),
+                "slot": slot,
             })
         return result
 
@@ -332,6 +335,14 @@ class SyncEngine:
 
             if players_map is None:
                 players_map = {}
+
+            # Extract starter slot labels from league settings
+            roster_positions = (
+                league.settings_json.get("roster_positions", [])
+                if league.settings_json
+                else []
+            )
+            starter_slots = [pos for pos in roster_positions if pos not in ("BN", "IR")]
 
             # Get user_leagues for this league
             result = await self.db.execute(
@@ -359,8 +370,12 @@ class SyncEngine:
                 if not home_ul or not away_ul:
                     continue
 
-                home_starters = self._build_starters_json(home, players_map)
-                away_starters = self._build_starters_json(away, players_map)
+                home_starters = self._build_starters_json(
+                    home, players_map, starter_slots or None
+                )
+                away_starters = self._build_starters_json(
+                    away, players_map, starter_slots or None
+                )
 
                 # Check if matchup already exists
                 existing = await self.db.execute(
