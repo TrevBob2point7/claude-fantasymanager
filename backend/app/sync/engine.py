@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import UTC, datetime
 from uuid import UUID
@@ -503,6 +504,87 @@ class SyncEngine:
             await self._log_error(log, str(e))
             raise
 
+    async def sync_historical_seasons(
+        self,
+        league: League,
+        user_id: UUID,
+        platform_account: PlatformAccount,
+    ) -> None:
+        """Walk the previous_league_id chain to sync historical seasons."""
+        prev_league_id = league.previous_league_id
+        adapter = get_adapter(platform_account.platform_type)
+
+        while prev_league_id:
+            # Check if this historical league already exists in DB
+            result = await self.db.execute(
+                select(League).where(
+                    League.platform_type == platform_account.platform_type,
+                    League.platform_league_id == prev_league_id,
+                )
+            )
+            if result.scalar_one_or_none() is not None:
+                # Already synced — stop walking
+                break
+
+            # Courtesy delay between API calls
+            await asyncio.sleep(0.05)
+
+            # Fetch the historical league
+            past_league = await adapter.get_league(prev_league_id)
+
+            # Merge roster_positions into settings_json
+            settings_json = {**(past_league.settings or {})}
+            if past_league.roster_positions is not None:
+                settings_json["roster_positions"] = past_league.roster_positions
+
+            # Upsert the historical league
+            stmt = (
+                pg_insert(League)
+                .values(
+                    platform_type=platform_account.platform_type,
+                    platform_league_id=past_league.league_id,
+                    name=past_league.name,
+                    season=past_league.season,
+                    roster_size=past_league.roster_size,
+                    scoring_type=past_league.scoring_type,
+                    league_type=past_league.league_type,
+                    settings_json=settings_json,
+                    previous_league_id=past_league.previous_league_id,
+                )
+                .on_conflict_do_update(
+                    index_elements=["platform_type", "platform_league_id", "season"],
+                    set_={
+                        "name": past_league.name,
+                        "roster_size": past_league.roster_size,
+                        "scoring_type": past_league.scoring_type,
+                        "league_type": past_league.league_type,
+                        "settings_json": settings_json,
+                        "previous_league_id": past_league.previous_league_id,
+                    },
+                )
+                .returning(League)
+            )
+            result = await self.db.execute(stmt)
+            db_league = result.scalar_one()
+
+            # Create user_league entry
+            stmt = (
+                pg_insert(UserLeague)
+                .values(user_id=user_id, league_id=db_league.id)
+                .on_conflict_do_nothing(index_elements=["user_id", "league_id"])
+            )
+            await self.db.execute(stmt)
+            await self.db.flush()
+
+            logger.info(
+                "Synced historical league %s season %d",
+                past_league.league_id,
+                past_league.season,
+            )
+
+            # Continue walking the chain
+            prev_league_id = past_league.previous_league_id
+
     async def sync_all(self, user_id: UUID, platform_account: PlatformAccount, season: int) -> dict:
         """Orchestrate a full sync for a platform account."""
         synced: list[str] = []
@@ -611,6 +693,19 @@ class SyncEngine:
             except Exception as e:
                 errors.append(f"standings({league.name}): {e}")
                 logger.exception("Failed to sync standings for league %s", league.id)
+
+        # 4. Sync historical seasons for leagues with previous_league_id
+        for league in leagues:
+            if league.previous_league_id:
+                try:
+                    await self.sync_historical_seasons(league, user_id, platform_account)
+                    if "historical_seasons" not in synced:
+                        synced.append("historical_seasons")
+                except Exception as e:
+                    errors.append(f"historical({league.name}): {e}")
+                    logger.exception(
+                        "Failed to sync historical seasons for league %s", league.id
+                    )
 
         # Sync bye weeks if no data exists for this season
         try:
