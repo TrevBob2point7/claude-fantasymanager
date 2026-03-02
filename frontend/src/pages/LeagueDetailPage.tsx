@@ -348,24 +348,23 @@ function RecordMatchupCard({
 function MatchupLine({ label, matchup, teamName }: { label: string; matchup: Matchup; teamName: string | null }) {
   // Determine if user is home or away to show correct perspective
   const isHome = teamName != null && matchup.home_team_name === teamName;
-  const myScore = isHome ? matchup.home_score : matchup.away_score;
-  const oppScore = isHome ? matchup.away_score : matchup.home_score;
+  const myScoreNum = safeScore(isHome ? matchup.home_score : matchup.away_score);
+  const oppScoreNum = safeScore(isHome ? matchup.away_score : matchup.home_score);
   const oppName = isHome ? matchup.away_team_name : matchup.home_team_name;
-  const myScoreNum = parseFloat(myScore);
-  const oppScoreNum = parseFloat(oppScore);
-  const won = myScoreNum > oppScoreNum;
-  const tied = myScoreNum === oppScoreNum;
+  const scored = myScoreNum != null && oppScoreNum != null;
+  const won = scored && myScoreNum > oppScoreNum;
+  const tied = scored && myScoreNum === oppScoreNum;
 
   return (
     <p>
       <span className="text-text-secondary">{label}: </span>
-      {!tied && (
+      {scored && !tied && (
         <span className={won ? "font-semibold text-accent-green" : "font-semibold text-destructive"}>
           {won ? "W" : "L"}{" "}
         </span>
       )}
       <span className="font-score text-text-primary">
-        {myScore}
+        {myScoreNum != null ? myScoreNum.toFixed(1) : "—"}
       </span>
       <span className="text-text-secondary"> vs </span>
       <span className="text-text-primary">{oppName ?? "TBD"}</span>
@@ -824,19 +823,20 @@ function MatchupsTab({ matchups, teamName }: { matchups: LeagueDetail["recent_ma
     <div className="space-y-3">
       {userMatchups.map((m) => {
         const isHome = teamName != null && m.home_team_name === teamName;
-        const myScore = parseFloat(isHome ? m.home_score : m.away_score);
-        const oppScore = parseFloat(isHome ? m.away_score : m.home_score);
-        const won = myScore > oppScore;
-        const tied = myScore === oppScore;
-        const played = myScore > 0 || oppScore > 0;
+        const myScore = safeScore(isHome ? m.home_score : m.away_score);
+        const oppScore = safeScore(isHome ? m.away_score : m.home_score);
+        const scored = myScore != null && oppScore != null;
+        const won = scored && myScore > oppScore;
+        const tied = scored && myScore === oppScore;
+        const played = scored && (myScore > 0 || oppScore > 0);
         const expanded = expandedId === m.id;
         const hasStarters = m.home_starters != null || m.away_starters != null;
 
         // Left = away, right = home — matches expanded roster column order
         const leftTeam = m.away_team_name ?? "Away";
         const rightTeam = m.home_team_name ?? "Home";
-        const leftScore = parseFloat(m.away_score);
-        const rightScore = parseFloat(m.home_score);
+        const leftScore = safeScore(m.away_score);
+        const rightScore = safeScore(m.home_score);
 
         return (
           <div
@@ -874,21 +874,25 @@ function MatchupsTab({ matchups, teamName }: { matchups: LeagueDetail["recent_ma
                 <div className="flex items-center justify-between min-w-0">
                   <span className="truncate font-medium text-text-primary">{leftTeam}</span>
                   <span className={`ml-2 shrink-0 font-score text-lg font-bold ${
-                    leftScore > rightScore ? "text-accent-green" :
-                    leftScore < rightScore ? "text-destructive" :
-                    "text-text-primary"
+                    leftScore != null && rightScore != null
+                      ? leftScore > rightScore ? "text-accent-green"
+                        : leftScore < rightScore ? "text-destructive"
+                        : "text-text-primary"
+                      : "text-text-primary"
                   }`}>
-                    {leftScore.toFixed(1)}
+                    {leftScore != null ? leftScore.toFixed(1) : "—"}
                   </span>
                 </div>
                 <span className="text-xs text-text-secondary">vs</span>
                 <div className="flex items-center justify-between min-w-0">
                   <span className={`shrink-0 font-score text-lg font-bold ${
-                    rightScore > leftScore ? "text-accent-green" :
-                    rightScore < leftScore ? "text-destructive" :
-                    "text-text-primary"
+                    leftScore != null && rightScore != null
+                      ? rightScore > leftScore ? "text-accent-green"
+                        : rightScore < leftScore ? "text-destructive"
+                        : "text-text-primary"
+                      : "text-text-primary"
                   }`}>
-                    {rightScore.toFixed(1)}
+                    {rightScore != null ? rightScore.toFixed(1) : "—"}
                   </span>
                   <span className="truncate text-right font-medium text-text-primary ml-2">{rightTeam}</span>
                 </div>
@@ -1038,6 +1042,13 @@ function TransactionsTab({ transactions }: { transactions: LeagueDetail["recent_
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** Parse a score string, returning null for missing/non-numeric values. */
+function safeScore(value: string | null | undefined): number | null {
+  if (value == null) return null;
+  const n = parseFloat(value);
+  return isNaN(n) ? null : n;
+}
 
 function ordinal(n: number): string {
   const s = ["th", "st", "nd", "rd"];
