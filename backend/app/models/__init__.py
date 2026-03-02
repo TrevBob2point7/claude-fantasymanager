@@ -19,6 +19,7 @@ from app.models.projected_score import ProjectedScore
 from app.models.roster import Roster
 from app.models.standing import Standing
 from app.models.sync_log import SyncLog
+from app.models.team_bye_week import TeamByeWeek
 from app.models.transaction import Transaction
 from app.models.user import User
 from app.models.user_league import UserLeague
@@ -42,6 +43,7 @@ __all__ = [
     "Standing",
     "SyncLog",
     "SyncStatus",
+    "TeamByeWeek",
     "Transaction",
     "TransactionType",
     "User",

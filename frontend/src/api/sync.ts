@@ -1,11 +1,30 @@
 import { get, post } from "./client";
 import type { SyncResult, SyncLogEntry } from "./types";
+import { getCurrentNflSeason } from "./season";
 
-export function triggerSync(
+function syncOneSeason(
   accountId: string,
-  season: number = 2025,
+  season: number,
 ): Promise<SyncResult> {
   return post<SyncResult>(`/sync/${accountId}?season=${season}`);
+}
+
+export async function triggerSync(
+  accountId: string,
+  seasons?: number[],
+): Promise<SyncResult> {
+  const currentSeason = getCurrentNflSeason();
+  const toSync = seasons ?? [currentSeason];
+
+  const results = await Promise.all(
+    toSync.map((s) => syncOneSeason(accountId, s)),
+  );
+
+  return {
+    status: results.every((r) => r.status === "ok") ? "ok" : "partial",
+    synced: results.flatMap((r) => r.synced),
+    errors: results.flatMap((r) => r.errors),
+  };
 }
 
 export function getSyncLog(limit?: number): Promise<SyncLogEntry[]> {

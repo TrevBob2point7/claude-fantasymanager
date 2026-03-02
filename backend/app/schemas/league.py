@@ -45,6 +45,7 @@ class StandingRead(BaseModel):
     points_for: Decimal
     points_against: Decimal
     rank: int | None
+    is_me: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -56,8 +57,18 @@ class RosterEntryRead(BaseModel):
     position: str | None
     team: str | None
     slot: str | None
+    status: str | None = None
+    bye_week: int | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class MatchupPlayerRead(BaseModel):
+    player_id: str
+    name: str
+    position: str | None = None
+    points: float | None = None
+    slot: str | None = None
 
 
 class MatchupRead(BaseModel):
@@ -67,6 +78,9 @@ class MatchupRead(BaseModel):
     away_team_name: str | None
     home_score: Decimal | None
     away_score: Decimal | None
+    is_user_matchup: bool = False
+    home_starters: list[MatchupPlayerRead] | None = None
+    away_starters: list[MatchupPlayerRead] | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -82,6 +96,15 @@ class TransactionRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class LeagueSeasonRead(BaseModel):
+    season: int
+    league_id: UUID
+
+
+class LeagueSeasonsResponse(BaseModel):
+    seasons: list[LeagueSeasonRead]
+
+
 class LeagueDetailRead(BaseModel):
     id: UUID
     platform_type: PlatformType
@@ -92,6 +115,7 @@ class LeagueDetailRead(BaseModel):
     scoring_type: ScoringType | None
     league_type: LeagueType | None = None
     team_name: str | None = None
+    current_week: int | None = None
     created_at: datetime
     standings: list[StandingRead]
     roster: list[RosterEntryRead]

@@ -18,17 +18,19 @@ if TYPE_CHECKING:
 
 class UserLeague(Base):
     __tablename__ = "user_leagues"
-    __table_args__ = (sa.UniqueConstraint("user_id", "league_id"),)
+    __table_args__ = (sa.UniqueConstraint("league_id", "platform_team_id"),)
 
     id: Mapped[uuid.UUID] = mapped_column(
         sa.Uuid, primary_key=True, server_default=sa.text("gen_random_uuid()")
     )
-    user_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, sa.ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("users.id"), nullable=True
+    )
     league_id: Mapped[uuid.UUID] = mapped_column(
         sa.Uuid, sa.ForeignKey("leagues.id"), nullable=False
     )
     team_name: Mapped[str | None] = mapped_column(sa.String(200), nullable=True)
-    platform_team_id: Mapped[str | None] = mapped_column(sa.String(100), nullable=True)
+    platform_team_id: Mapped[str] = mapped_column(sa.String(100), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
     )

@@ -1,13 +1,23 @@
 import { useState, useEffect, useMemo } from "react";
-import { useParams, Link } from "react-router-dom";
-import { getLeagueDetail } from "../api/leagues";
+import { useParams, useNavigate, Link } from "react-router-dom";
+import { getLeagueDetail, getLeagueSeasons } from "../api/leagues";
 import { getRosterADP } from "../api/adp";
-import type { LeagueDetail, RosterPlayer } from "../api/types";
+import { getCurrentNflSeason } from "../api/season";
+import type {
+  LeagueDetail,
+  LeagueSeason,
+  RosterPlayer,
+  Standing,
+  Matchup,
+  MatchupPlayer,
+  Transaction,
+} from "../api/types";
 import PlayerADPModal from "../components/PlayerADPModal";
 
-type Tab = "roster" | "standings" | "matchups" | "transactions";
+type Tab = "overview" | "roster" | "standings" | "matchups" | "transactions";
 
 const tabs: { key: Tab; label: string }[] = [
+  { key: "overview", label: "Overview" },
   { key: "roster", label: "Roster" },
   { key: "standings", label: "Standings" },
   { key: "matchups", label: "Matchups" },
@@ -24,12 +34,14 @@ const SCORING_FORMATS = [
 
 export default function LeagueDetailPage() {
   const { leagueId } = useParams<{ leagueId: string }>();
+  const navigate = useNavigate();
   const [league, setLeague] = useState<LeagueDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<Tab>("roster");
+  const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [adpFormat, setAdpFormat] = useState<string | null>(null);
   const [adpMap, setAdpMap] = useState<Record<string, string | null>>({});
+  const [seasons, setSeasons] = useState<LeagueSeason[]>([]);
 
   // Fetch league detail when leagueId changes
   useEffect(() => {
@@ -39,7 +51,6 @@ export default function LeagueDetailPage() {
     getLeagueDetail(leagueId)
       .then((data) => {
         setLeague(data);
-        // Always derive ADP format from league settings on load
         if (data.league_type === "dynasty") {
           setAdpFormat("dynasty");
         } else {
@@ -51,9 +62,14 @@ export default function LeagueDetailPage() {
         setError(err instanceof Error ? err.message : "Failed to load league"),
       )
       .finally(() => setLoading(false));
+
+    // Fetch available seasons
+    getLeagueSeasons(leagueId)
+      .then((data) => setSeasons(data.seasons))
+      .catch(() => setSeasons([]));
   }, [leagueId]);
 
-  // Fetch ADP separately — depends on roster player IDs and format
+  // Fetch ADP separately
   const playerIds = useMemo(
     () => league?.roster.map((p) => p.player_id) ?? [],
     [league?.roster],
@@ -87,6 +103,9 @@ export default function LeagueDetailPage() {
     );
   }
 
+  const isPastSeason = league.season < getCurrentNflSeason();
+  const isCurrentSeason = !isPastSeason;
+
   return (
     <div>
       <Link to="/" className="text-sm text-accent hover:underline">
@@ -94,17 +113,35 @@ export default function LeagueDetailPage() {
       </Link>
 
       {/* Header */}
-      <div className="mt-4">
-        <h1 className="font-heading text-2xl font-bold text-text-primary">
-          {league.name}
-        </h1>
-        <p className="mt-1 text-text-secondary">
-          {league.season} &middot; {league.scoring_type?.toUpperCase() ?? "—"}
-          {league.league_type && (
-            <> &middot; <span className="capitalize">{league.league_type}</span></>
-          )}
-          {" "}&middot; {league.roster_size ?? "—"} roster spots &middot; {league.team_name ?? "My Team"}
-        </p>
+      <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="font-heading text-2xl font-bold text-text-primary">
+            {league.name}
+          </h1>
+          <p className="mt-1 text-text-secondary">
+            {league.season} &middot; {league.scoring_type?.toUpperCase() ?? "—"}
+            {league.league_type && (
+              <> &middot; <span className="capitalize">{league.league_type}</span></>
+            )}
+            {" "}&middot; {league.roster_size ?? "—"} roster spots &middot; {league.team_name ?? "My Team"}
+          </p>
+        </div>
+        {seasons.length > 1 && (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-text-secondary">Season:</span>
+            <select
+              value={leagueId}
+              onChange={(e) => navigate(`/leagues/${e.target.value}`)}
+              className="rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-text-primary"
+            >
+              {seasons.map((s) => (
+                <option key={s.league_id} value={s.league_id}>
+                  {s.season}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Tabs */}
@@ -128,6 +165,13 @@ export default function LeagueDetailPage() {
 
       {/* Tab content */}
       <div className="mt-4">
+        {activeTab === "overview" && (
+          <OverviewTab
+            league={league}
+            adpMap={adpMap}
+            isCurrentSeason={isCurrentSeason}
+          />
+        )}
         {activeTab === "roster" && (
           <RosterTab
             roster={league.roster}
@@ -138,7 +182,9 @@ export default function LeagueDetailPage() {
           />
         )}
         {activeTab === "standings" && <StandingsTab standings={league.standings} />}
-        {activeTab === "matchups" && <MatchupsTab matchups={league.recent_matchups} />}
+        {activeTab === "matchups" && (
+          <MatchupsTab matchups={league.recent_matchups} teamName={league.team_name} />
+        )}
         {activeTab === "transactions" && (
           <TransactionsTab transactions={league.recent_transactions} />
         )}
@@ -147,9 +193,416 @@ export default function LeagueDetailPage() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Overview Tab (7.1)
+// ---------------------------------------------------------------------------
+
+function OverviewTab({
+  league,
+  adpMap,
+  isCurrentSeason,
+}: {
+  league: LeagueDetail;
+  adpMap: Record<string, string | null>;
+  isCurrentSeason: boolean;
+}) {
+  const [adpPlayer, setAdpPlayer] = useState<RosterPlayer | null>(null);
+
+  const userStanding = league.standings.find((s) => s.is_me) ?? null;
+
+  const starters = sortBySlot(
+    league.roster.filter((p) => p.slot != null && p.slot !== "TAXI"),
+  );
+
+  const recentTransactions = league.recent_transactions.slice(0, 5);
+
+  return (
+    <>
+      {/* Top row: Record & Matchup + Roster Alerts */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <RecordMatchupCard
+          standing={userStanding}
+          matchups={league.recent_matchups}
+          leagueSize={league.standings.length}
+          isCurrentSeason={isCurrentSeason}
+          teamName={league.team_name}
+        />
+        {isCurrentSeason && (
+          <RosterAlerts
+            starters={starters}
+            currentWeek={league.current_week}
+          />
+        )}
+      </div>
+
+      {/* Starting Lineup */}
+      <div className="mt-6">
+        <h2 className="mb-3 font-heading text-lg font-semibold text-text-primary">
+          Starting Lineup
+        </h2>
+        <StartingLineupTable
+          starters={starters}
+          adpMap={adpMap}
+          onPlayerClick={setAdpPlayer}
+        />
+      </div>
+
+      {/* Recent Activity */}
+      {(isCurrentSeason || recentTransactions.length > 0) && (
+        <div className="mt-6">
+          <h2 className="mb-3 font-heading text-lg font-semibold text-text-primary">
+            Recent Activity
+          </h2>
+          <RecentActivity transactions={recentTransactions} />
+        </div>
+      )}
+
+      {adpPlayer && (
+        <PlayerADPModal
+          playerId={adpPlayer.player_id}
+          playerName={adpPlayer.player_name}
+          position={adpPlayer.position}
+          team={adpPlayer.team}
+          format={league.league_type === "dynasty" ? "dynasty" : league.scoring_type ?? undefined}
+          onClose={() => setAdpPlayer(null)}
+        />
+      )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Record & Matchup Card (7.2)
+// ---------------------------------------------------------------------------
+
+function RecordMatchupCard({
+  standing,
+  matchups,
+  leagueSize,
+  isCurrentSeason,
+  teamName,
+}: {
+  standing: Standing | null;
+  matchups: Matchup[];
+  leagueSize: number;
+  isCurrentSeason: boolean;
+  teamName: string | null;
+}) {
+  const userMatchups = matchups.filter((m) => m.is_user_matchup);
+  const lastMatchup = userMatchups.length > 0 ? userMatchups[0] : null;
+  // Next matchup would be the first future matchup; for now we don't have a
+  // separate "upcoming" matchup in the API, so we skip it until the API
+  // provides that data. We show the last completed matchup.
+
+  return (
+    <div className="rounded-xl border border-border bg-surface p-5">
+      <h2 className="mb-3 font-heading text-lg font-semibold text-text-primary">
+        Record & Matchup
+      </h2>
+
+      {standing ? (
+        <div className="space-y-2">
+          <div className="flex items-baseline gap-3">
+            <span className="font-score text-2xl font-bold text-text-primary">
+              {standing.wins}-{standing.losses}-{standing.ties}
+            </span>
+            <span className="text-sm text-text-secondary">
+              {standing.rank != null ? `${ordinal(standing.rank)} of ${leagueSize}` : "—"}
+            </span>
+          </div>
+          <div className="flex gap-6 text-sm">
+            <span>
+              <span className="text-text-secondary">PF: </span>
+              <span className="font-score text-accent-green">
+                {formatPoints(standing.points_for)}
+              </span>
+            </span>
+            <span>
+              <span className="text-text-secondary">PA: </span>
+              <span className="font-score text-text-secondary">
+                {formatPoints(standing.points_against)}
+              </span>
+            </span>
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm text-text-secondary">—</p>
+      )}
+
+      <div className="mt-4 border-t border-border pt-3">
+        {lastMatchup ? (
+          <div className="space-y-1 text-sm">
+            <MatchupLine label="Last" matchup={lastMatchup} teamName={teamName} />
+          </div>
+        ) : (
+          <p className="text-sm text-text-secondary">No matchups yet</p>
+        )}
+        {isCurrentSeason && !lastMatchup && (
+          <p className="mt-1 text-sm text-text-secondary">Season has not started</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MatchupLine({ label, matchup, teamName }: { label: string; matchup: Matchup; teamName: string | null }) {
+  // Determine if user is home or away to show correct perspective
+  const isHome = teamName != null && matchup.home_team_name === teamName;
+  const myScoreNum = safeScore(isHome ? matchup.home_score : matchup.away_score);
+  const oppScoreNum = safeScore(isHome ? matchup.away_score : matchup.home_score);
+  const oppName = isHome ? matchup.away_team_name : matchup.home_team_name;
+  const scored = myScoreNum != null && oppScoreNum != null;
+  const won = scored && myScoreNum > oppScoreNum;
+  const tied = scored && myScoreNum === oppScoreNum;
+
+  return (
+    <p>
+      <span className="text-text-secondary">{label}: </span>
+      {scored && !tied && (
+        <span className={won ? "font-semibold text-accent-green" : "font-semibold text-destructive"}>
+          {won ? "W" : "L"}{" "}
+        </span>
+      )}
+      <span className="font-score text-text-primary">
+        {myScoreNum != null ? myScoreNum.toFixed(1) : "—"}
+      </span>
+      <span className="text-text-secondary"> vs </span>
+      <span className="text-text-primary">{oppName ?? "TBD"}</span>
+      <span className="text-text-secondary"> (Wk {matchup.week})</span>
+    </p>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Roster Alerts (7.3)
+// ---------------------------------------------------------------------------
+
+const ALERT_SEVERITY: Record<string, number> = {
+  out: 0,
+  injured_reserve: 0,
+  suspended: 0,
+  doubtful: 1,
+  bye: 2,
+  questionable: 3,
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  out: "OUT",
+  injured_reserve: "IR",
+  suspended: "Suspended",
+  doubtful: "Doubtful",
+  questionable: "Questionable",
+};
+
+interface RosterAlert {
+  playerName: string;
+  alertType: string;
+  label: string;
+  severity: number;
+}
+
+function RosterAlerts({
+  starters,
+  currentWeek,
+}: {
+  starters: RosterPlayer[];
+  currentWeek: number | null;
+}) {
+  const alerts: RosterAlert[] = [];
+
+  for (const player of starters) {
+    // Status-based alerts
+    if (player.status && player.status !== "active" && STATUS_LABELS[player.status]) {
+      alerts.push({
+        playerName: player.player_name,
+        alertType: player.status,
+        label: STATUS_LABELS[player.status],
+        severity: ALERT_SEVERITY[player.status] ?? 99,
+      });
+    }
+    // Bye week alert
+    if (currentWeek != null && player.bye_week != null && player.bye_week === currentWeek) {
+      alerts.push({
+        playerName: player.player_name,
+        alertType: "bye",
+        label: `BYE (Wk ${player.bye_week})`,
+        severity: ALERT_SEVERITY.bye,
+      });
+    }
+  }
+
+  alerts.sort((a, b) => a.severity - b.severity);
+
+  return (
+    <div className="rounded-xl border border-border bg-surface p-5">
+      <h2 className="mb-3 font-heading text-lg font-semibold text-text-primary">
+        Roster Alerts
+      </h2>
+      {alerts.length === 0 ? (
+        <p className="text-sm text-text-secondary">No roster alerts</p>
+      ) : (
+        <div className="space-y-2">
+          {alerts.map((alert, i) => (
+            <div
+              key={`${alert.playerName}-${alert.alertType}-${i}`}
+              className="flex items-center gap-2 text-sm"
+            >
+              <span className="text-accent-orange">&#9888;</span>
+              <span className="font-medium text-text-primary">{alert.playerName}</span>
+              <span className="text-text-secondary">&mdash;</span>
+              <span className={
+                alert.severity === 0 ? "font-semibold text-destructive" :
+                alert.severity === 1 ? "font-semibold text-accent-orange" :
+                "text-text-secondary"
+              }>
+                {alert.label}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Starting Lineup Table (7.4)
+// ---------------------------------------------------------------------------
+
+function StartingLineupTable({
+  starters,
+  adpMap,
+  onPlayerClick,
+}: {
+  starters: RosterPlayer[];
+  adpMap: Record<string, string | null>;
+  onPlayerClick: (player: RosterPlayer) => void;
+}) {
+  if (starters.length === 0) {
+    return <p className="py-8 text-center text-text-secondary">No roster data available.</p>;
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-xl border border-border">
+      <table className="w-full table-fixed text-sm">
+        <colgroup>
+          <col className="w-[12%]" />
+          <col className="w-[35%]" />
+          <col className="w-[13%]" />
+          <col className="w-[20%]" />
+          <col className="w-[20%]" />
+        </colgroup>
+        <thead>
+          <tr className="border-b border-border bg-surface">
+            <th className="px-4 py-3 text-left font-medium text-text-secondary">Slot</th>
+            <th className="px-4 py-3 text-left font-medium text-text-secondary">Player</th>
+            <th className="px-4 py-3 text-left font-medium text-text-secondary">Pos</th>
+            <th className="px-4 py-3 text-left font-medium text-text-secondary">Team</th>
+            <th className="px-4 py-3 text-right font-medium text-text-secondary">ADP</th>
+          </tr>
+        </thead>
+        <tbody>
+          {starters.map((player) => {
+            const adp = adpMap[player.player_id];
+            return (
+              <tr key={player.id} className="border-b border-border last:border-0">
+                <td className="px-4 py-3 text-xs font-semibold uppercase text-text-secondary">
+                  {player.slot}
+                </td>
+                <td className="px-4 py-3 font-medium text-text-primary">
+                  {player.player_name}
+                </td>
+                <td className="px-4 py-3 text-text-secondary">{player.position}</td>
+                <td className="px-4 py-3 text-text-secondary">{player.team}</td>
+                <td className="px-4 py-3 text-right">
+                  {adp ? (
+                    <button
+                      onClick={() => onPlayerClick(player)}
+                      className="font-score text-accent hover:underline"
+                    >
+                      {adp}
+                    </button>
+                  ) : (
+                    <span className="text-text-secondary">&mdash;</span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Recent Activity (7.5)
+// ---------------------------------------------------------------------------
+
+function RecentActivity({ transactions }: { transactions: Transaction[] }) {
+  if (transactions.length === 0) {
+    return <p className="text-sm text-text-secondary">No recent activity.</p>;
+  }
+
+  return (
+    <div className="space-y-2">
+      {transactions.map((t) => (
+        <div
+          key={t.id}
+          className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface px-4 py-3 sm:justify-between"
+        >
+          <div className="flex items-center gap-3">
+            <TransactionBadge type={t.type} />
+            <span className="font-medium text-text-primary">{t.player_name}</span>
+          </div>
+          <div className="flex items-center gap-3 text-sm text-text-secondary">
+            <span>
+              {t.from_team_name && <>{t.from_team_name} &rarr; </>}
+              {t.to_team_name ?? "Free Agent"}
+            </span>
+            <span>&middot;</span>
+            <span>{relativeTime(t.timestamp)}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TransactionBadge({ type }: { type: string }) {
+  const styles: Record<string, string> = {
+    add: "bg-accent-green/15 text-accent-green",
+    drop: "bg-destructive/15 text-destructive",
+    trade: "bg-accent-orange/15 text-accent-orange",
+    waiver: "bg-accent/15 text-accent",
+  };
+
+  return (
+    <span className={`rounded-md px-2 py-0.5 text-xs font-semibold uppercase ${styles[type] ?? "bg-surface-hover text-text-secondary"}`}>
+      {type}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Roster Tab (existing, preserved)
+// ---------------------------------------------------------------------------
+
 const POSITION_ORDER: Record<string, number> = {
   QB: 0, RB: 1, WR: 2, TE: 3, DEF: 4, K: 5,
 };
+
+const SLOT_ORDER: Record<string, number> = {
+  QB: 0, RB: 1, WR: 2, TE: 3, FLEX: 4, SUPERFLEX: 5, K: 6, PK: 6, DEF: 7,
+};
+
+function sortBySlot(players: RosterPlayer[]): RosterPlayer[] {
+  return [...players].sort((a, b) => {
+    const aOrder = SLOT_ORDER[a.slot ?? ""] ?? 99;
+    const bOrder = SLOT_ORDER[b.slot ?? ""] ?? 99;
+    return aOrder - bOrder;
+  });
+}
 
 function sortByPosition(
   players: RosterPlayer[],
@@ -208,7 +661,7 @@ function RosterTable({
                       {adp}
                     </button>
                   ) : (
-                    <span className="text-text-secondary">—</span>
+                    <span className="text-text-secondary">&mdash;</span>
                   )}
                 </td>
               </tr>
@@ -235,10 +688,12 @@ function RosterTab({
 }) {
   const [adpPlayer, setAdpPlayer] = useState<RosterPlayer | null>(null);
 
+  // Main roster: everyone except taxi — sort by position group + ADP
   const mainRoster = sortByPosition(
     roster.filter((p) => p.slot !== "TAXI"),
     adpMap,
   );
+  // Taxi: slot === "TAXI" — sort by position group + ADP
   const taxiSquad = sortByPosition(
     roster.filter((p) => p.slot === "TAXI"),
     adpMap,
@@ -271,7 +726,14 @@ function RosterTab({
         ))}
       </div>
 
-      <RosterTable players={mainRoster} adpMap={adpMap} onPlayerClick={setAdpPlayer} />
+      {mainRoster.length > 0 && (
+        <>
+          <h3 className="mb-3 font-heading text-lg font-semibold text-text-primary">
+            Roster
+          </h3>
+          <RosterTable players={mainRoster} adpMap={adpMap} onPlayerClick={setAdpPlayer} />
+        </>
+      )}
 
       {taxiSquad.length > 0 && (
         <>
@@ -296,12 +758,16 @@ function RosterTab({
   );
 }
 
+// ---------------------------------------------------------------------------
+// Standings Tab (existing, preserved)
+// ---------------------------------------------------------------------------
+
 function StandingsTab({ standings }: { standings: LeagueDetail["standings"] }) {
   if (standings.length === 0) {
     return <p className="py-8 text-center text-text-secondary">No standings data available.</p>;
   }
 
-  const sorted = [...standings].sort((a, b) => a.rank - b.rank);
+  const sorted = [...standings].sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity));
 
   return (
     <div className="overflow-x-auto rounded-xl border border-border">
@@ -319,9 +785,12 @@ function StandingsTab({ standings }: { standings: LeagueDetail["standings"] }) {
         </thead>
         <tbody>
           {sorted.map((s) => (
-            <tr key={s.id} className="border-b border-border last:border-0">
-              <td className="px-4 py-3 font-score text-lg font-semibold text-accent">{s.rank}</td>
-              <td className="px-4 py-3 font-medium text-text-primary">{s.team_name ?? "—"}</td>
+            <tr key={s.id} className={`border-b border-border last:border-0${s.is_me ? " bg-accent/5" : ""}`}>
+              <td className="px-4 py-3 font-score text-lg font-semibold text-accent">{s.rank ?? "—"}</td>
+              <td className="px-4 py-3 font-medium text-text-primary">
+                {s.team_name ?? "—"}
+                {s.is_me && <span className="ml-2 text-xs text-accent">(You)</span>}
+              </td>
               <td className="px-4 py-3 text-right text-text-primary">{s.wins}</td>
               <td className="px-4 py-3 text-right text-text-primary">{s.losses}</td>
               <td className="px-4 py-3 text-right text-text-secondary">{s.ties}</td>
@@ -335,42 +804,203 @@ function StandingsTab({ standings }: { standings: LeagueDetail["standings"] }) {
   );
 }
 
-function MatchupsTab({ matchups }: { matchups: LeagueDetail["recent_matchups"] }) {
-  if (matchups.length === 0) {
+// ---------------------------------------------------------------------------
+// Matchups Tab (existing, preserved)
+// ---------------------------------------------------------------------------
+
+function MatchupsTab({ matchups, teamName }: { matchups: LeagueDetail["recent_matchups"]; teamName: string | null }) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const userMatchups = matchups
+    .filter((m) => m.is_user_matchup)
+    .sort((a, b) => a.week - b.week);
+
+  if (userMatchups.length === 0) {
     return <p className="py-8 text-center text-text-secondary">No matchup data available.</p>;
   }
 
   return (
     <div className="space-y-3">
-      {matchups.map((m) => (
-        <div
-          key={m.id}
-          className="rounded-xl border border-border bg-surface p-4"
-        >
-          <p className="mb-2 text-xs font-medium text-text-secondary">Week {m.week}</p>
-          <div className="flex items-center justify-between">
-            <div className="flex-1">
-              <p className="font-medium text-text-primary">{m.home_team_name ?? "TBD"}</p>
-              <p className="font-score text-xl font-semibold text-accent">{m.home_score}</p>
-            </div>
-            <span className="px-4 text-sm text-text-secondary">vs</span>
-            <div className="flex-1 text-right">
-              <p className="font-medium text-text-primary">{m.away_team_name ?? "TBD"}</p>
-              <p className="font-score text-xl font-semibold text-accent">{m.away_score}</p>
-            </div>
+      {userMatchups.map((m) => {
+        const isHome = teamName != null && m.home_team_name === teamName;
+        const myScore = safeScore(isHome ? m.home_score : m.away_score);
+        const oppScore = safeScore(isHome ? m.away_score : m.home_score);
+        const scored = myScore != null && oppScore != null;
+        const won = scored && myScore > oppScore;
+        const tied = scored && myScore === oppScore;
+        const played = scored && (myScore > 0 || oppScore > 0);
+        const expanded = expandedId === m.id;
+        const hasStarters = m.home_starters != null || m.away_starters != null;
+
+        // Left = away, right = home — matches expanded roster column order
+        const leftTeam = m.away_team_name ?? "Away";
+        const rightTeam = m.home_team_name ?? "Home";
+        const leftScore = safeScore(m.away_score);
+        const rightScore = safeScore(m.home_score);
+
+        return (
+          <div
+            key={m.id}
+            className={`rounded-xl border bg-surface ${
+              !played ? "border-border" :
+              won ? "border-accent-green/30" :
+              tied ? "border-border" :
+              "border-destructive/30"
+            }`}
+          >
+            <button
+              type="button"
+              className="w-full p-4 text-left"
+              onClick={() => setExpandedId(expanded ? null : m.id)}
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <p className="text-xs font-medium text-text-secondary">Week {m.week}</p>
+                  {played && (
+                    <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
+                      won ? "bg-accent-green/15 text-accent-green" :
+                      tied ? "bg-surface-hover text-text-secondary" :
+                      "bg-destructive/15 text-destructive"
+                    }`}>
+                      {won ? "W" : tied ? "T" : "L"}
+                    </span>
+                  )}
+                </div>
+                {hasStarters && (
+                  <span className="text-xs text-text-secondary">{expanded ? "▲" : "▼"}</span>
+                )}
+              </div>
+              <div className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                <div className="flex items-center justify-between min-w-0">
+                  <span className="truncate font-medium text-text-primary">{leftTeam}</span>
+                  <span className={`ml-2 shrink-0 font-score text-lg font-bold ${
+                    leftScore != null && rightScore != null
+                      ? leftScore > rightScore ? "text-accent-green"
+                        : leftScore < rightScore ? "text-destructive"
+                        : "text-text-primary"
+                      : "text-text-primary"
+                  }`}>
+                    {leftScore != null ? leftScore.toFixed(1) : "—"}
+                  </span>
+                </div>
+                <span className="text-xs text-text-secondary">vs</span>
+                <div className="flex items-center justify-between min-w-0">
+                  <span className={`shrink-0 font-score text-lg font-bold ${
+                    leftScore != null && rightScore != null
+                      ? rightScore > leftScore ? "text-accent-green"
+                        : rightScore < leftScore ? "text-destructive"
+                        : "text-text-primary"
+                      : "text-text-primary"
+                  }`}>
+                    {rightScore != null ? rightScore.toFixed(1) : "—"}
+                  </span>
+                  <span className="truncate text-right font-medium text-text-primary ml-2">{rightTeam}</span>
+                </div>
+              </div>
+            </button>
+            {expanded && hasStarters && (
+              <MatchupStarters
+                leftStarters={m.away_starters}
+                rightStarters={m.home_starters}
+              />
+            )}
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
+
+function MatchupStarters({
+  leftStarters,
+  rightStarters,
+}: {
+  leftStarters: MatchupPlayer[] | null;
+  rightStarters: MatchupPlayer[] | null;
+}) {
+  // Build slot-level winner map: index → "left" | "right" | "tie"
+  const slotResults: Map<number, "left" | "right" | "tie"> = new Map();
+  if (leftStarters && rightStarters) {
+    const len = Math.min(leftStarters.length, rightStarters.length);
+    for (let i = 0; i < len; i++) {
+      const lp = leftStarters[i].points;
+      const rp = rightStarters[i].points;
+      if (lp != null && rp != null) {
+        if (lp > rp) slotResults.set(i, "left");
+        else if (rp > lp) slotResults.set(i, "right");
+        else slotResults.set(i, "tie");
+      }
+    }
+  }
+
+  const maxLen = Math.max(
+    leftStarters?.length ?? 0,
+    rightStarters?.length ?? 0,
+  );
+
+  return (
+    <div className="border-t border-border px-4 pb-4 pt-3">
+      <div className="overflow-hidden rounded-lg border border-border">
+        {Array.from({ length: maxLen }, (_, i) => {
+          const ls = leftStarters?.[i];
+          const rs = rightStarters?.[i];
+          const result = slotResults.get(i);
+          const rowBg = i % 2 === 0 ? "bg-surface" : "bg-surface-hover/50";
+
+          const leftWon = result === "left";
+          const leftLost = result === "right";
+          const rightWon = result === "right";
+          const rightLost = result === "left";
+
+          const leftPointsColor = leftWon ? "text-accent-green" : leftLost ? "text-destructive" : "text-text-primary";
+          const rightPointsColor = rightWon ? "text-accent-green" : rightLost ? "text-destructive" : "text-text-primary";
+
+          return (
+            <div key={i} className={`grid grid-cols-[1fr_auto_1fr] items-center gap-2 px-3 py-1.5 text-sm ${rowBg}`}>
+              {/* Left side: slot + name ... points */}
+              <div className="flex items-center justify-between min-w-0">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-10 shrink-0 text-xs font-semibold text-text-secondary">
+                    {ls?.slot ?? ls?.position ?? ""}
+                  </span>
+                  <span className="truncate text-text-primary">{ls?.name ?? ""}</span>
+                </div>
+                <span className={`ml-2 shrink-0 font-score ${leftPointsColor}`}>
+                  {ls?.points != null ? ls.points.toFixed(1) : "—"}
+                </span>
+              </div>
+              {/* Divider */}
+              <span className="text-border">|</span>
+              {/* Right side: points ... name + slot */}
+              <div className="flex items-center justify-between min-w-0">
+                <span className={`mr-2 shrink-0 font-score ${rightPointsColor}`}>
+                  {rs?.points != null ? rs.points.toFixed(1) : "—"}
+                </span>
+                <div className="flex items-center gap-2 min-w-0 justify-end">
+                  <span className="truncate text-text-primary">{rs?.name ?? ""}</span>
+                  <span className="w-10 shrink-0 text-right text-xs font-semibold text-text-secondary">
+                    {rs?.slot ?? rs?.position ?? ""}
+                  </span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Transactions Tab (existing, preserved)
+// ---------------------------------------------------------------------------
 
 function TransactionsTab({ transactions }: { transactions: LeagueDetail["recent_transactions"] }) {
   if (transactions.length === 0) {
     return <p className="py-8 text-center text-text-secondary">No transaction data available.</p>;
   }
 
-  function typeLabel(type: string) {
+  function typeColor(type: string) {
     switch (type) {
       case "add":
         return "text-accent-green";
@@ -392,7 +1022,7 @@ function TransactionsTab({ transactions }: { transactions: LeagueDetail["recent_
         >
           <div className="flex flex-wrap items-center gap-2 sm:justify-between">
             <div className="flex items-center gap-3">
-              <span className={`text-xs font-semibold uppercase ${typeLabel(t.type)}`}>
+              <span className={`text-xs font-semibold uppercase ${typeColor(t.type)}`}>
                 {t.type}
               </span>
               <span className="font-medium text-text-primary">{t.player_name}</span>
@@ -407,4 +1037,45 @@ function TransactionsTab({ transactions }: { transactions: LeagueDetail["recent_
       ))}
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Parse a score string, returning null for missing/non-numeric values. */
+function safeScore(value: string | null | undefined): number | null {
+  if (value == null) return null;
+  const n = parseFloat(value);
+  return isNaN(n) ? null : n;
+}
+
+function ordinal(n: number): string {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+
+function formatPoints(value: string): string {
+  const num = parseFloat(value);
+  if (isNaN(num)) return value;
+  return num.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+}
+
+function relativeTime(timestamp: string): string {
+  const now = Date.now();
+  const then = new Date(timestamp).getTime();
+  const diffMs = now - then;
+  const diffSec = Math.floor(diffMs / 1000);
+  const diffMin = Math.floor(diffSec / 60);
+  const diffHr = Math.floor(diffMin / 60);
+  const diffDay = Math.floor(diffHr / 24);
+  const diffWeek = Math.floor(diffDay / 7);
+
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffHr < 24) return `${diffHr}h ago`;
+  if (diffDay < 7) return `${diffDay}d ago`;
+  if (diffWeek < 4) return `${diffWeek}w ago`;
+  return new Date(timestamp).toLocaleDateString();
 }

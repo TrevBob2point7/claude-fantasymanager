@@ -9,6 +9,13 @@ class PlatformUser:
 
 
 @dataclass
+class PlatformLeagueUser:
+    user_id: str  # platform user ID (e.g. Sleeper owner_id)
+    display_name: str | None = None
+    team_name: str | None = None
+
+
+@dataclass
 class PlatformLeague:
     league_id: str
     name: str
@@ -17,11 +24,14 @@ class PlatformLeague:
     scoring_type: str | None = None
     league_type: str | None = None
     settings: dict | None = None
+    previous_league_id: str | None = None
+    roster_positions: list[str] | None = None
 
 
 @dataclass
 class PlatformRosterEntry:
-    owner_id: str  # platform roster_id / owner_id
+    owner_id: str  # platform user ID (e.g. Sleeper owner_id)
+    roster_id: str = ""  # platform roster/team ID (e.g. Sleeper roster_id, 1-12)
     player_ids: list[str] = field(default_factory=list)
     starters: list[str] = field(default_factory=list)
     taxi: list[str] = field(default_factory=list)
@@ -33,6 +43,8 @@ class PlatformMatchup:
     roster_id: str
     points: float | None = None
     week: int = 0
+    starters: list[str] = field(default_factory=list)
+    starters_points: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass

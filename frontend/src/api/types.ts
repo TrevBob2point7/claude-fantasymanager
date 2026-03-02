@@ -66,7 +66,8 @@ export interface Standing {
   ties: number;
   points_for: string;
   points_against: string;
-  rank: number;
+  rank: number | null;
+  is_me: boolean;
 }
 
 export interface RosterPlayer {
@@ -76,6 +77,16 @@ export interface RosterPlayer {
   position: string;
   team: string;
   slot: string | null;
+  status: string | null;
+  bye_week: number | null;
+}
+
+export interface MatchupPlayer {
+  player_id: string;
+  name: string;
+  position: string | null;
+  points: number | null;
+  slot: string | null;
 }
 
 export interface Matchup {
@@ -83,8 +94,11 @@ export interface Matchup {
   week: number;
   home_team_name: string | null;
   away_team_name: string | null;
-  home_score: string;
-  away_score: string;
+  home_score: string | null;
+  away_score: string | null;
+  is_user_matchup: boolean;
+  home_starters: MatchupPlayer[] | null;
+  away_starters: MatchupPlayer[] | null;
 }
 
 export interface Transaction {
@@ -101,6 +115,12 @@ export interface LeagueDetail extends League {
   roster: RosterPlayer[];
   recent_matchups: Matchup[];
   recent_transactions: Transaction[];
+  current_week: number | null;
+}
+
+export interface LeagueSeason {
+  season: number;
+  league_id: string;
 }
 
 export interface SyncResult {
