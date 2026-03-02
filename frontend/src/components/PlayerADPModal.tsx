@@ -29,6 +29,7 @@ interface PlayerADPModalProps {
   playerName: string;
   position: string;
   team: string;
+  format?: string;
   onClose: () => void;
 }
 
@@ -37,6 +38,7 @@ export default function PlayerADPModal({
   playerName,
   position,
   team,
+  format,
   onClose,
 }: PlayerADPModalProps) {
   const [history, setHistory] = useState<PlayerADPHistory[]>([]);
@@ -45,13 +47,13 @@ export default function PlayerADPModal({
 
   useEffect(() => {
     setLoading(true);
-    getPlayerADPHistory(playerId)
+    getPlayerADPHistory(playerId, format)
       .then(setHistory)
       .catch((err) =>
         setError(err instanceof Error ? err.message : "Failed to load ADP history"),
       )
       .finally(() => setLoading(false));
-  }, [playerId]);
+  }, [playerId, format]);
 
   // Close on Escape key
   const handleKeyDown = useCallback(

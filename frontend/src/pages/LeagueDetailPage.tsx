@@ -288,6 +288,7 @@ function RosterTab({
           playerName={adpPlayer.player_name}
           position={adpPlayer.position}
           team={adpPlayer.team}
+          format={adpFormat}
           onClose={() => setAdpPlayer(null)}
         />
       )}
