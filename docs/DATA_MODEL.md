@@ -212,8 +212,12 @@ Weekly matchup pairings and scores.
 | `away_user_league_id` | UUID | NO | — | FK → `user_leagues.id` |
 | `home_score` | NUMERIC(10,2) | YES | — | |
 | `away_score` | NUMERIC(10,2) | YES | — | |
+| `home_starters_json` | JSON | YES | — | `[{player_id, name, position, points, slot}]` |
+| `away_starters_json` | JSON | YES | — | Same format as `home_starters_json` |
 | `created_at` | TIMESTAMPTZ | NO | `now()` | |
 | `updated_at` | TIMESTAMPTZ | NO | `now()` | Auto-updated |
+
+**Starters JSON format:** Each entry contains `player_id` (platform player ID), `name`, `position`, `points` (float, nullable), and `slot` (roster slot label like QB, FLEX — derived from the league's `roster_positions` setting). Populated during sync from the platform's matchup API.
 
 ---
 
