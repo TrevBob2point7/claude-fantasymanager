@@ -1,5 +1,4 @@
 import logging
-from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -12,6 +11,7 @@ from app.core.database import get_db
 from app.models import League, Matchup, PlatformAccount, Roster, Standing, Transaction, UserLeague
 from app.models.team_bye_week import TeamByeWeek
 from app.models.user import User
+from app.core.season import get_current_nfl_season
 from app.platforms.registry import get_adapter
 from app.schemas.league import (
     DiscoveredLeague,
@@ -52,7 +52,7 @@ async def discover_leagues(
             detail="Platform account not found",
         )
 
-    season = body.season or datetime.now(UTC).year
+    season = body.season or get_current_nfl_season()
 
     try:
         adapter = get_adapter(account.platform_type)
@@ -123,8 +123,7 @@ async def list_leagues(
     elif season is not None:
         query = query.where(League.season == season)
     else:
-        effective_season = datetime.now(UTC).year
-        query = query.where(League.season == effective_season)
+        query = query.where(League.season == get_current_nfl_season())
 
     result = await db.execute(query)
     rows = result.all()
