@@ -102,18 +102,28 @@ async def discover_leagues(
 @router.get("", response_model=list[LeagueRead])
 async def list_leagues(
     season: int | None = Query(None),
+    latest: bool = Query(False),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # Default to current year if no season specified
-    effective_season = season if season is not None else datetime.now(UTC).year
-
     query = (
         select(League, UserLeague.team_name)
         .join(UserLeague, UserLeague.league_id == League.id)
         .where(UserLeague.user_id == current_user.id)
-        .where(League.season == effective_season)
     )
+
+    if latest:
+        # Only return leagues whose platform_league_id is NOT referenced
+        # as another league's previous_league_id (i.e. the head of each chain)
+        successor_ids = select(League.previous_league_id).where(
+            League.previous_league_id.isnot(None)
+        )
+        query = query.where(League.platform_league_id.notin_(successor_ids))
+    elif season is not None:
+        query = query.where(League.season == season)
+    else:
+        effective_season = datetime.now(UTC).year
+        query = query.where(League.season == effective_season)
 
     result = await db.execute(query)
     rows = result.all()

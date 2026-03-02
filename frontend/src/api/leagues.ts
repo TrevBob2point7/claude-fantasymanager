@@ -1,8 +1,11 @@
 import { get, post } from "./client";
 import type { DiscoveredLeague, League, LeagueDetail, LeagueSeason } from "./types";
 
-export function getLeagues(season?: number): Promise<League[]> {
-  const query = season != null ? `?season=${season}` : "";
+export function getLeagues(opts?: { season?: number; latest?: boolean }): Promise<League[]> {
+  const params = new URLSearchParams();
+  if (opts?.latest) params.set("latest", "true");
+  else if (opts?.season != null) params.set("season", String(opts.season));
+  const query = params.toString() ? `?${params}` : "";
   return get<League[]>(`/leagues${query}`);
 }
 
