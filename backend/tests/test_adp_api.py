@@ -95,6 +95,153 @@ class TestSyncADPEndpoint:
         assert response.status_code in (401, 403)
 
 
+class TestBatchADPEndpoint:
+    """POST /api/adp/batch"""
+
+    async def test_batch_returns_adp_values(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ):
+        player = await _create_player(db_session, "Jalen Hurts", Position.QB, "PHI")
+        await _create_adp_entry(
+            db_session, player.id, source="sleeper", format=ADPFormat.ppr,
+            season=2025, adp=25.0,
+        )
+
+        response = await authenticated_client.post(
+            "/api/adp/batch",
+            json={"player_ids": [str(player.id)], "season": 2025, "format": "ppr"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert str(player.id) in data
+        assert float(data[str(player.id)]) == 25.0
+
+    async def test_batch_prefers_sleeper_over_ffc(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ):
+        """Source priority: sleeper > ffc > dynastyprocess."""
+        player = await _create_player(db_session, "AJ Brown", Position.WR, "PHI")
+        await _create_adp_entry(
+            db_session, player.id, source="ffc", format=ADPFormat.ppr,
+            season=2025, adp=8.0,
+        )
+        await _create_adp_entry(
+            db_session, player.id, source="sleeper", format=ADPFormat.ppr,
+            season=2025, adp=12.0,
+        )
+
+        response = await authenticated_client.post(
+            "/api/adp/batch",
+            json={"player_ids": [str(player.id)], "season": 2025, "format": "ppr"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        # Should pick sleeper (12.0) over ffc (8.0) despite ffc being lower
+        assert float(data[str(player.id)]) == 12.0
+
+    async def test_batch_filters_by_format(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ):
+        player = await _create_player(db_session, "Amon-Ra St. Brown", Position.WR, "DET")
+        await _create_adp_entry(
+            db_session, player.id, source="sleeper", format=ADPFormat.ppr,
+            season=2025, adp=10.0,
+        )
+        await _create_adp_entry(
+            db_session, player.id, source="sleeper", format=ADPFormat.standard,
+            season=2025, adp=15.0,
+        )
+
+        response = await authenticated_client.post(
+            "/api/adp/batch",
+            json={"player_ids": [str(player.id)], "season": 2025, "format": "standard"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert float(data[str(player.id)]) == 15.0
+
+    async def test_batch_empty_player_list(
+        self,
+        authenticated_client: AsyncClient,
+    ):
+        response = await authenticated_client.post(
+            "/api/adp/batch",
+            json={"player_ids": [], "season": 2025},
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {}
+
+    async def test_batch_falls_back_to_closest_season(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ):
+        player = await _create_player(db_session, "Jahmyr Gibbs", Position.RB, "DET")
+        await _create_adp_entry(
+            db_session, player.id, source="sleeper", format=ADPFormat.ppr,
+            season=2024, adp=18.0,
+        )
+
+        response = await authenticated_client.post(
+            "/api/adp/batch",
+            json={"player_ids": [str(player.id)], "season": 2025, "format": "ppr"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        # Should fall back to 2024 data when 2025 isn't available
+        assert float(data[str(player.id)]) == 18.0
+
+    async def test_batch_missing_player_not_in_result(
+        self,
+        authenticated_client: AsyncClient,
+        db_session: AsyncSession,
+    ):
+        player = await _create_player(db_session, "Real Player", Position.QB, "NYJ")
+        await _create_adp_entry(
+            db_session, player.id, source="sleeper", format=ADPFormat.ppr,
+            season=2025, adp=30.0,
+        )
+        fake_id = uuid.uuid4()
+
+        response = await authenticated_client.post(
+            "/api/adp/batch",
+            json={"player_ids": [str(player.id), str(fake_id)], "season": 2025, "format": "ppr"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert str(player.id) in data
+        assert str(fake_id) not in data
+
+    async def test_batch_unauthenticated(self, client: AsyncClient):
+        response = await client.post(
+            "/api/adp/batch",
+            json={"player_ids": [], "season": 2025},
+        )
+        assert response.status_code in (401, 403)
+
+    async def test_batch_invalid_format_rejected(
+        self,
+        authenticated_client: AsyncClient,
+    ):
+        response = await authenticated_client.post(
+            "/api/adp/batch",
+            json={"player_ids": [], "season": 2025, "format": "invalid_format"},
+        )
+        assert response.status_code == 422
+
+
 class TestPlayerADPHistoryEndpoint:
     """GET /api/adp/players/{player_id}/history"""
 
@@ -193,3 +340,14 @@ class TestPlayerADPHistoryEndpoint:
         # Should be ordered by season descending
         assert data[0]["season"] == 2025
         assert data[1]["season"] == 2024
+
+    async def test_get_history_invalid_format_rejected(
+        self,
+        authenticated_client: AsyncClient,
+    ):
+        fake_id = uuid.uuid4()
+        response = await authenticated_client.get(
+            f"/api/adp/players/{fake_id}/history",
+            params={"format": "invalid_format"},
+        )
+        assert response.status_code == 422
