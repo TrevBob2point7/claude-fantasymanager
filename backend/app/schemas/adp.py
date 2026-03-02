@@ -3,6 +3,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
+from app.models.enums import ADPFormat
+
 
 class ADPSourceRead(BaseModel):
     source: str
@@ -15,7 +17,7 @@ class PlayerADPRead(BaseModel):
     id: UUID
     player_id: UUID
     source: str
-    format: str
+    format: ADPFormat
     season: int
     adp: Decimal
     position_rank: int | None
@@ -26,7 +28,7 @@ class PlayerADPRead(BaseModel):
 class BatchADPRequest(BaseModel):
     player_ids: list[UUID]
     season: int
-    format: str | None = None
+    format: ADPFormat | None = None
 
 
 class ADPSyncResponse(BaseModel):
