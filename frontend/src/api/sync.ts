@@ -1,9 +1,10 @@
 import { get, post } from "./client";
 import type { SyncResult, SyncLogEntry } from "./types";
+import { getCurrentNflSeason } from "./season";
 
 export function triggerSync(
   accountId: string,
-  season: number = 2025,
+  season: number = getCurrentNflSeason(),
 ): Promise<SyncResult> {
   return post<SyncResult>(`/sync/${accountId}?season=${season}`);
 }

@@ -1,9 +1,10 @@
 import { useLeagues } from "../hooks/useLeagues";
 import LeagueCard from "../components/LeagueCard";
 import EmptyState from "../components/EmptyState";
+import { getCurrentNflSeason } from "../api/season";
 
 export default function DashboardPage() {
-  const { leagues, loading, error } = useLeagues(new Date().getFullYear());
+  const { leagues, loading, error } = useLeagues(getCurrentNflSeason());
 
   if (loading) {
     return (

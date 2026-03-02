@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { getLeagueDetail, getLeagueSeasons } from "../api/leagues";
 import { getRosterADP } from "../api/adp";
+import { getCurrentNflSeason } from "../api/season";
 import type {
   LeagueDetail,
   LeagueSeason,
@@ -101,7 +102,7 @@ export default function LeagueDetailPage() {
     );
   }
 
-  const isPastSeason = league.season < new Date().getFullYear() || league.current_week === 0;
+  const isPastSeason = league.season < getCurrentNflSeason() || league.current_week === 0;
   const isCurrentSeason = !isPastSeason;
 
   return (
