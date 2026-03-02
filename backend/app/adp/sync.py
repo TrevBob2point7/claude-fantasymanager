@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adp.base import ADPProvider, ADPRecord
 from app.adp.registry import get_adp_providers
-from app.models.enums import ADPFormat
 from app.models.player import Player
 from app.models.player_adp import PlayerADP
 
@@ -51,23 +50,33 @@ class ADPSyncService:
                     errored += 1
                     continue
 
+                rows = []
                 for record in records:
                     player_id = self._match_player(record, sleeper_map, name_map)
                     if player_id is None:
                         skipped += 1
                         continue
+                    rows.append({
+                        "player_id": player_id,
+                        "source": record.source,
+                        "format": record.format,
+                        "season": season,
+                        "adp": min(record.adp, 999999.99),
+                        "position_rank": record.position_rank,
+                    })
 
+                if rows:
                     try:
-                        async with self.db.begin_nested():
-                            await self._upsert_adp(player_id, record, season)
-                        synced += 1
+                        await self._bulk_upsert(rows)
+                        synced += len(rows)
                     except Exception:
                         logger.exception(
-                            "Failed to upsert ADP for player %s from %s",
-                            record.player_name,
-                            record.source,
+                            "Failed to bulk upsert %d ADP rows from %s/%s",
+                            len(rows),
+                            self._provider_name(provider),
+                            fmt,
                         )
-                        errored += 1
+                        errored += len(rows)
 
         await self.db.commit()
         logger.info(
@@ -112,33 +121,15 @@ class ADPSyncService:
         # No match
         return None
 
-    async def _upsert_adp(
-        self,
-        player_id: str,
-        record: ADPRecord,
-        season: int,
-    ) -> None:
-        # Cap ADP at 999999.99 (column is NUMERIC(8,2)); some sources use
-        # sentinel values like 9999999 for undrafted players.
-        adp_value = min(record.adp, 999999.99)
-
-        stmt = (
-            pg_insert(PlayerADP)
-            .values(
-                player_id=player_id,
-                source=record.source,
-                format=record.format,
-                season=season,
-                adp=adp_value,
-                position_rank=record.position_rank,
-            )
-            .on_conflict_do_update(
-                index_elements=["player_id", "source", "format", "season"],
-                set_={
-                    "adp": adp_value,
-                    "position_rank": record.position_rank,
-                },
-            )
+    async def _bulk_upsert(self, rows: list[dict]) -> None:
+        """Bulk upsert ADP rows in a single INSERT ... ON CONFLICT statement."""
+        insert_stmt = pg_insert(PlayerADP).values(rows)
+        stmt = insert_stmt.on_conflict_do_update(
+            index_elements=["player_id", "source", "format", "season"],
+            set_={
+                "adp": insert_stmt.excluded.adp,
+                "position_rank": insert_stmt.excluded.position_rank,
+            },
         )
         await self.db.execute(stmt)
 
