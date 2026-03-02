@@ -155,9 +155,19 @@ async def get_league_detail(
         )
     league, team_name = row
 
+    # Get user's user_league to identify "me"
+    result = await db.execute(
+        select(UserLeague).where(
+            UserLeague.league_id == league_id,
+            UserLeague.user_id == current_user.id,
+        )
+    )
+    user_league = result.scalar_one_or_none()
+    user_league_id = user_league.id if user_league else None
+
     # Get standings with team names
     result = await db.execute(
-        select(Standing, UserLeague.team_name)
+        select(Standing, UserLeague.team_name, UserLeague.id)
         .join(UserLeague, UserLeague.id == Standing.user_league_id)
         .where(Standing.league_id == league_id)
         .order_by(Standing.rank)
@@ -172,18 +182,10 @@ async def get_league_detail(
             points_for=s.points_for,
             points_against=s.points_against,
             rank=s.rank,
+            is_me=ul_id == user_league_id,
         )
-        for s, t_name in result.all()
+        for s, t_name, ul_id in result.all()
     ]
-
-    # Get user's roster with player info
-    result = await db.execute(
-        select(UserLeague).where(
-            UserLeague.league_id == league_id,
-            UserLeague.user_id == current_user.id,
-        )
-    )
-    user_league = result.scalar_one_or_none()
 
     # Build bye week lookup for this season
     bye_result = await db.execute(
@@ -234,6 +236,10 @@ async def get_league_detail(
             away_team_name=all_uls.get(m.away_user_league_id),
             home_score=m.home_score,
             away_score=m.away_score,
+            is_user_matchup=(
+                m.home_user_league_id == user_league_id
+                or m.away_user_league_id == user_league_id
+            ),
         )
         for m in matchups_raw
     ]

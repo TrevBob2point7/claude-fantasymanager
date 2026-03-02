@@ -67,6 +67,7 @@ export interface Standing {
   points_for: string;
   points_against: string;
   rank: number;
+  is_me: boolean;
 }
 
 export interface RosterPlayer {
@@ -87,6 +88,7 @@ export interface Matchup {
   away_team_name: string | null;
   home_score: string;
   away_score: string;
+  is_user_matchup: boolean;
 }
 
 export interface Transaction {

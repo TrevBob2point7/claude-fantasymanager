@@ -204,9 +204,7 @@ function OverviewTab({
 }) {
   const [adpPlayer, setAdpPlayer] = useState<RosterPlayer | null>(null);
 
-  const userStanding = league.standings.length > 0
-    ? [...league.standings].sort((a, b) => a.rank - b.rank)[0]
-    : null;
+  const userStanding = league.standings.find((s) => s.is_me) ?? null;
 
   const starters = sortBySlot(
     league.roster.filter((p) => p.slot != null && p.slot !== "TAXI"),
@@ -223,6 +221,7 @@ function OverviewTab({
           matchups={league.recent_matchups}
           leagueSize={league.standings.length}
           isCurrentSeason={isCurrentSeason}
+          teamName={league.team_name}
         />
         {isCurrentSeason && (
           <RosterAlerts
@@ -277,13 +276,16 @@ function RecordMatchupCard({
   matchups,
   leagueSize,
   isCurrentSeason,
+  teamName,
 }: {
   standing: Standing | null;
   matchups: Matchup[];
   leagueSize: number;
   isCurrentSeason: boolean;
+  teamName: string | null;
 }) {
-  const lastMatchup = matchups.length > 0 ? matchups[0] : null;
+  const userMatchups = matchups.filter((m) => m.is_user_matchup);
+  const lastMatchup = userMatchups.length > 0 ? userMatchups[0] : null;
   // Next matchup would be the first future matchup; for now we don't have a
   // separate "upcoming" matchup in the API, so we skip it until the API
   // provides that data. We show the last completed matchup.
@@ -326,7 +328,7 @@ function RecordMatchupCard({
       <div className="mt-4 border-t border-border pt-3">
         {lastMatchup ? (
           <div className="space-y-1 text-sm">
-            <MatchupLine label="Last" matchup={lastMatchup} />
+            <MatchupLine label="Last" matchup={lastMatchup} teamName={teamName} />
           </div>
         ) : (
           <p className="text-sm text-text-secondary">No matchups yet</p>
@@ -339,25 +341,30 @@ function RecordMatchupCard({
   );
 }
 
-function MatchupLine({ label, matchup }: { label: string; matchup: Matchup }) {
-  const homeScore = parseFloat(matchup.home_score);
-  const awayScore = parseFloat(matchup.away_score);
-  const homeWon = homeScore > awayScore;
-  const tied = homeScore === awayScore;
+function MatchupLine({ label, matchup, teamName }: { label: string; matchup: Matchup; teamName: string | null }) {
+  // Determine if user is home or away to show correct perspective
+  const isHome = teamName != null && matchup.home_team_name === teamName;
+  const myScore = isHome ? matchup.home_score : matchup.away_score;
+  const oppScore = isHome ? matchup.away_score : matchup.home_score;
+  const oppName = isHome ? matchup.away_team_name : matchup.home_team_name;
+  const myScoreNum = parseFloat(myScore);
+  const oppScoreNum = parseFloat(oppScore);
+  const won = myScoreNum > oppScoreNum;
+  const tied = myScoreNum === oppScoreNum;
 
   return (
     <p>
       <span className="text-text-secondary">{label}: </span>
       {!tied && (
-        <span className={homeWon ? "font-semibold text-accent-green" : "font-semibold text-destructive"}>
-          {homeWon ? "W" : "L"}{" "}
+        <span className={won ? "font-semibold text-accent-green" : "font-semibold text-destructive"}>
+          {won ? "W" : "L"}{" "}
         </span>
       )}
       <span className="font-score text-text-primary">
-        {matchup.home_score}
+        {myScore}
       </span>
       <span className="text-text-secondary"> vs </span>
-      <span className="text-text-primary">{matchup.away_team_name ?? "TBD"}</span>
+      <span className="text-text-primary">{oppName ?? "TBD"}</span>
       <span className="text-text-secondary"> (Wk {matchup.week})</span>
     </p>
   );
@@ -775,9 +782,12 @@ function StandingsTab({ standings }: { standings: LeagueDetail["standings"] }) {
         </thead>
         <tbody>
           {sorted.map((s) => (
-            <tr key={s.id} className="border-b border-border last:border-0">
+            <tr key={s.id} className={`border-b border-border last:border-0${s.is_me ? " bg-accent/5" : ""}`}>
               <td className="px-4 py-3 font-score text-lg font-semibold text-accent">{s.rank}</td>
-              <td className="px-4 py-3 font-medium text-text-primary">{s.team_name ?? "—"}</td>
+              <td className="px-4 py-3 font-medium text-text-primary">
+                {s.team_name ?? "—"}
+                {s.is_me && <span className="ml-2 text-xs text-accent">(You)</span>}
+              </td>
               <td className="px-4 py-3 text-right text-text-primary">{s.wins}</td>
               <td className="px-4 py-3 text-right text-text-primary">{s.losses}</td>
               <td className="px-4 py-3 text-right text-text-secondary">{s.ties}</td>

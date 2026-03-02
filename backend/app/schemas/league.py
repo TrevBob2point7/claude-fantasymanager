@@ -45,6 +45,7 @@ class StandingRead(BaseModel):
     points_for: Decimal
     points_against: Decimal
     rank: int | None
+    is_me: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -69,6 +70,7 @@ class MatchupRead(BaseModel):
     away_team_name: str | None
     home_score: Decimal | None
     away_score: Decimal | None
+    is_user_matchup: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
