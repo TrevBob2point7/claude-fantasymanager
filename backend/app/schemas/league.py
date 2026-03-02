@@ -56,6 +56,8 @@ class RosterEntryRead(BaseModel):
     position: str | None
     team: str | None
     slot: str | None
+    status: str | None = None
+    bye_week: int | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -82,6 +84,15 @@ class TransactionRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class LeagueSeasonRead(BaseModel):
+    season: int
+    league_id: UUID
+
+
+class LeagueSeasonsResponse(BaseModel):
+    seasons: list[LeagueSeasonRead]
+
+
 class LeagueDetailRead(BaseModel):
     id: UUID
     platform_type: PlatformType
@@ -92,6 +103,7 @@ class LeagueDetailRead(BaseModel):
     scoring_type: ScoringType | None
     league_type: LeagueType | None = None
     team_name: str | None = None
+    current_week: int | None = None
     created_at: datetime
     standings: list[StandingRead]
     roster: list[RosterEntryRead]
