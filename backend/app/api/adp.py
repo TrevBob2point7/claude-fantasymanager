@@ -5,7 +5,7 @@ from uuid import UUID
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adp.sync import ADPSyncService
@@ -52,16 +52,27 @@ async def get_batch_adp(
     )
     adp_season = season_result.scalar_one_or_none() or body.season
 
-    adp_query = (
-        select(PlayerADP.player_id, sa.func.min(PlayerADP.adp))
-        .where(
-            PlayerADP.player_id.in_(body.player_ids),
-            PlayerADP.season == adp_season,
-        )
+    # Preferred source order: pick the first available per player rather
+    # than min() across sources, which can mix incompatible scales.
+    source_priority = case(
+        {"sleeper": 1, "ffc": 2, "dynastyprocess": 3},
+        value=PlayerADP.source,
+        else_=99,
     )
+
+    filters = [
+        PlayerADP.player_id.in_(body.player_ids),
+        PlayerADP.season == adp_season,
+    ]
     if body.format:
-        adp_query = adp_query.where(PlayerADP.format == body.format)
-    adp_query = adp_query.group_by(PlayerADP.player_id)
+        filters.append(PlayerADP.format == body.format)
+
+    adp_query = (
+        select(PlayerADP.player_id, PlayerADP.adp)
+        .where(*filters)
+        .distinct(PlayerADP.player_id)
+        .order_by(PlayerADP.player_id, source_priority)
+    )
 
     result = await db.execute(adp_query)
     return {str(pid): adp for pid, adp in result.all()}
