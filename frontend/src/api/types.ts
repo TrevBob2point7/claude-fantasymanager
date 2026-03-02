@@ -76,6 +76,8 @@ export interface RosterPlayer {
   position: string;
   team: string;
   slot: string | null;
+  status: string | null;
+  bye_week: number | null;
 }
 
 export interface Matchup {
@@ -101,6 +103,12 @@ export interface LeagueDetail extends League {
   roster: RosterPlayer[];
   recent_matchups: Matchup[];
   recent_transactions: Transaction[];
+  current_week: number | null;
+}
+
+export interface LeagueSeason {
+  season: number;
+  league_id: string;
 }
 
 export interface SyncResult {

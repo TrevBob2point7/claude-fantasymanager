@@ -3,7 +3,7 @@ import LeagueCard from "../components/LeagueCard";
 import EmptyState from "../components/EmptyState";
 
 export default function DashboardPage() {
-  const { leagues, loading, error } = useLeagues();
+  const { leagues, loading, error } = useLeagues(new Date().getFullYear());
 
   if (loading) {
     return (

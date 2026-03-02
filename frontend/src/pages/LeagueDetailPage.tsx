@@ -1,13 +1,21 @@
 import { useState, useEffect, useMemo } from "react";
-import { useParams, Link } from "react-router-dom";
-import { getLeagueDetail } from "../api/leagues";
+import { useParams, useNavigate, Link } from "react-router-dom";
+import { getLeagueDetail, getLeagueSeasons } from "../api/leagues";
 import { getRosterADP } from "../api/adp";
-import type { LeagueDetail, RosterPlayer } from "../api/types";
+import type {
+  LeagueDetail,
+  LeagueSeason,
+  RosterPlayer,
+  Standing,
+  Matchup,
+  Transaction,
+} from "../api/types";
 import PlayerADPModal from "../components/PlayerADPModal";
 
-type Tab = "roster" | "standings" | "matchups" | "transactions";
+type Tab = "overview" | "roster" | "standings" | "matchups" | "transactions";
 
 const tabs: { key: Tab; label: string }[] = [
+  { key: "overview", label: "Overview" },
   { key: "roster", label: "Roster" },
   { key: "standings", label: "Standings" },
   { key: "matchups", label: "Matchups" },
@@ -24,12 +32,14 @@ const SCORING_FORMATS = [
 
 export default function LeagueDetailPage() {
   const { leagueId } = useParams<{ leagueId: string }>();
+  const navigate = useNavigate();
   const [league, setLeague] = useState<LeagueDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<Tab>("roster");
+  const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [adpFormat, setAdpFormat] = useState<string | null>(null);
   const [adpMap, setAdpMap] = useState<Record<string, string | null>>({});
+  const [seasons, setSeasons] = useState<LeagueSeason[]>([]);
 
   // Fetch league detail when leagueId changes
   useEffect(() => {
@@ -39,7 +49,6 @@ export default function LeagueDetailPage() {
     getLeagueDetail(leagueId)
       .then((data) => {
         setLeague(data);
-        // Always derive ADP format from league settings on load
         if (data.league_type === "dynasty") {
           setAdpFormat("dynasty");
         } else {
@@ -51,9 +60,14 @@ export default function LeagueDetailPage() {
         setError(err instanceof Error ? err.message : "Failed to load league"),
       )
       .finally(() => setLoading(false));
+
+    // Fetch available seasons
+    getLeagueSeasons(leagueId)
+      .then((data) => setSeasons(data.seasons))
+      .catch(() => setSeasons([]));
   }, [leagueId]);
 
-  // Fetch ADP separately — depends on roster player IDs and format
+  // Fetch ADP separately
   const playerIds = useMemo(
     () => league?.roster.map((p) => p.player_id) ?? [],
     [league?.roster],
@@ -87,6 +101,9 @@ export default function LeagueDetailPage() {
     );
   }
 
+  const isPastSeason = league.season < new Date().getFullYear() || league.current_week === 0;
+  const isCurrentSeason = !isPastSeason;
+
   return (
     <div>
       <Link to="/" className="text-sm text-accent hover:underline">
@@ -94,17 +111,35 @@ export default function LeagueDetailPage() {
       </Link>
 
       {/* Header */}
-      <div className="mt-4">
-        <h1 className="font-heading text-2xl font-bold text-text-primary">
-          {league.name}
-        </h1>
-        <p className="mt-1 text-text-secondary">
-          {league.season} &middot; {league.scoring_type?.toUpperCase() ?? "—"}
-          {league.league_type && (
-            <> &middot; <span className="capitalize">{league.league_type}</span></>
-          )}
-          {" "}&middot; {league.roster_size ?? "—"} roster spots &middot; {league.team_name ?? "My Team"}
-        </p>
+      <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="font-heading text-2xl font-bold text-text-primary">
+            {league.name}
+          </h1>
+          <p className="mt-1 text-text-secondary">
+            {league.season} &middot; {league.scoring_type?.toUpperCase() ?? "—"}
+            {league.league_type && (
+              <> &middot; <span className="capitalize">{league.league_type}</span></>
+            )}
+            {" "}&middot; {league.roster_size ?? "—"} roster spots &middot; {league.team_name ?? "My Team"}
+          </p>
+        </div>
+        {seasons.length > 1 && (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-text-secondary">Season:</span>
+            <select
+              value={leagueId}
+              onChange={(e) => navigate(`/leagues/${e.target.value}`)}
+              className="rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-text-primary"
+            >
+              {seasons.map((s) => (
+                <option key={s.league_id} value={s.league_id}>
+                  {s.season}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Tabs */}
@@ -128,6 +163,13 @@ export default function LeagueDetailPage() {
 
       {/* Tab content */}
       <div className="mt-4">
+        {activeTab === "overview" && (
+          <OverviewTab
+            league={league}
+            adpMap={adpMap}
+            isCurrentSeason={isCurrentSeason}
+          />
+        )}
         {activeTab === "roster" && (
           <RosterTab
             roster={league.roster}
@@ -146,6 +188,395 @@ export default function LeagueDetailPage() {
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Overview Tab (7.1)
+// ---------------------------------------------------------------------------
+
+function OverviewTab({
+  league,
+  adpMap,
+  isCurrentSeason,
+}: {
+  league: LeagueDetail;
+  adpMap: Record<string, string | null>;
+  isCurrentSeason: boolean;
+}) {
+  const [adpPlayer, setAdpPlayer] = useState<RosterPlayer | null>(null);
+
+  const userStanding = league.standings.length > 0
+    ? [...league.standings].sort((a, b) => a.rank - b.rank)[0]
+    : null;
+
+  const starters = league.roster.filter(
+    (p) => p.slot != null && p.slot !== "TAXI",
+  );
+
+  const recentTransactions = league.recent_transactions.slice(0, 5);
+
+  return (
+    <>
+      {/* Top row: Record & Matchup + Roster Alerts */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <RecordMatchupCard
+          standing={userStanding}
+          matchups={league.recent_matchups}
+          leagueSize={league.standings.length}
+          isCurrentSeason={isCurrentSeason}
+        />
+        {isCurrentSeason && (
+          <RosterAlerts
+            starters={starters}
+            currentWeek={league.current_week}
+          />
+        )}
+      </div>
+
+      {/* Starting Lineup */}
+      <div className="mt-6">
+        <h2 className="mb-3 font-heading text-lg font-semibold text-text-primary">
+          Starting Lineup
+        </h2>
+        <StartingLineupTable
+          starters={starters}
+          adpMap={adpMap}
+          onPlayerClick={setAdpPlayer}
+        />
+      </div>
+
+      {/* Recent Activity */}
+      {(isCurrentSeason || recentTransactions.length > 0) && (
+        <div className="mt-6">
+          <h2 className="mb-3 font-heading text-lg font-semibold text-text-primary">
+            Recent Activity
+          </h2>
+          <RecentActivity transactions={recentTransactions} />
+        </div>
+      )}
+
+      {adpPlayer && (
+        <PlayerADPModal
+          playerId={adpPlayer.player_id}
+          playerName={adpPlayer.player_name}
+          position={adpPlayer.position}
+          team={adpPlayer.team}
+          format={league.league_type === "dynasty" ? "dynasty" : league.scoring_type ?? undefined}
+          onClose={() => setAdpPlayer(null)}
+        />
+      )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Record & Matchup Card (7.2)
+// ---------------------------------------------------------------------------
+
+function RecordMatchupCard({
+  standing,
+  matchups,
+  leagueSize,
+  isCurrentSeason,
+}: {
+  standing: Standing | null;
+  matchups: Matchup[];
+  leagueSize: number;
+  isCurrentSeason: boolean;
+}) {
+  const lastMatchup = matchups.length > 0 ? matchups[0] : null;
+  // Next matchup would be the first future matchup; for now we don't have a
+  // separate "upcoming" matchup in the API, so we skip it until the API
+  // provides that data. We show the last completed matchup.
+
+  return (
+    <div className="rounded-xl border border-border bg-surface p-5">
+      <h2 className="mb-3 font-heading text-lg font-semibold text-text-primary">
+        Record & Matchup
+      </h2>
+
+      {standing ? (
+        <div className="space-y-2">
+          <div className="flex items-baseline gap-3">
+            <span className="font-score text-2xl font-bold text-text-primary">
+              {standing.wins}-{standing.losses}-{standing.ties}
+            </span>
+            <span className="text-sm text-text-secondary">
+              {ordinal(standing.rank)} of {leagueSize}
+            </span>
+          </div>
+          <div className="flex gap-6 text-sm">
+            <span>
+              <span className="text-text-secondary">PF: </span>
+              <span className="font-score text-accent-green">
+                {formatPoints(standing.points_for)}
+              </span>
+            </span>
+            <span>
+              <span className="text-text-secondary">PA: </span>
+              <span className="font-score text-text-secondary">
+                {formatPoints(standing.points_against)}
+              </span>
+            </span>
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm text-text-secondary">—</p>
+      )}
+
+      <div className="mt-4 border-t border-border pt-3">
+        {lastMatchup ? (
+          <div className="space-y-1 text-sm">
+            <MatchupLine label="Last" matchup={lastMatchup} />
+          </div>
+        ) : (
+          <p className="text-sm text-text-secondary">No matchups yet</p>
+        )}
+        {isCurrentSeason && !lastMatchup && (
+          <p className="mt-1 text-sm text-text-secondary">Season has not started</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MatchupLine({ label, matchup }: { label: string; matchup: Matchup }) {
+  const homeScore = parseFloat(matchup.home_score);
+  const awayScore = parseFloat(matchup.away_score);
+  const homeWon = homeScore > awayScore;
+  const tied = homeScore === awayScore;
+
+  return (
+    <p>
+      <span className="text-text-secondary">{label}: </span>
+      {!tied && (
+        <span className={homeWon ? "font-semibold text-accent-green" : "font-semibold text-destructive"}>
+          {homeWon ? "W" : "L"}{" "}
+        </span>
+      )}
+      <span className="font-score text-text-primary">
+        {matchup.home_score}
+      </span>
+      <span className="text-text-secondary"> vs </span>
+      <span className="text-text-primary">{matchup.away_team_name ?? "TBD"}</span>
+      <span className="text-text-secondary"> (Wk {matchup.week})</span>
+    </p>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Roster Alerts (7.3)
+// ---------------------------------------------------------------------------
+
+const ALERT_SEVERITY: Record<string, number> = {
+  out: 0,
+  injured_reserve: 0,
+  suspended: 0,
+  doubtful: 1,
+  bye: 2,
+  questionable: 3,
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  out: "OUT",
+  injured_reserve: "IR",
+  suspended: "Suspended",
+  doubtful: "Doubtful",
+  questionable: "Questionable",
+};
+
+interface RosterAlert {
+  playerName: string;
+  alertType: string;
+  label: string;
+  severity: number;
+}
+
+function RosterAlerts({
+  starters,
+  currentWeek,
+}: {
+  starters: RosterPlayer[];
+  currentWeek: number | null;
+}) {
+  const alerts: RosterAlert[] = [];
+
+  for (const player of starters) {
+    // Status-based alerts
+    if (player.status && player.status !== "active" && STATUS_LABELS[player.status]) {
+      alerts.push({
+        playerName: player.player_name,
+        alertType: player.status,
+        label: STATUS_LABELS[player.status],
+        severity: ALERT_SEVERITY[player.status] ?? 99,
+      });
+    }
+    // Bye week alert
+    if (currentWeek != null && player.bye_week != null && player.bye_week === currentWeek) {
+      alerts.push({
+        playerName: player.player_name,
+        alertType: "bye",
+        label: `BYE (Wk ${player.bye_week})`,
+        severity: ALERT_SEVERITY.bye,
+      });
+    }
+  }
+
+  alerts.sort((a, b) => a.severity - b.severity);
+
+  return (
+    <div className="rounded-xl border border-border bg-surface p-5">
+      <h2 className="mb-3 font-heading text-lg font-semibold text-text-primary">
+        Roster Alerts
+      </h2>
+      {alerts.length === 0 ? (
+        <p className="text-sm text-text-secondary">No roster alerts</p>
+      ) : (
+        <div className="space-y-2">
+          {alerts.map((alert, i) => (
+            <div
+              key={`${alert.playerName}-${alert.alertType}-${i}`}
+              className="flex items-center gap-2 text-sm"
+            >
+              <span className="text-accent-orange">&#9888;</span>
+              <span className="font-medium text-text-primary">{alert.playerName}</span>
+              <span className="text-text-secondary">&mdash;</span>
+              <span className={
+                alert.severity === 0 ? "font-semibold text-destructive" :
+                alert.severity === 1 ? "font-semibold text-accent-orange" :
+                "text-text-secondary"
+              }>
+                {alert.label}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Starting Lineup Table (7.4)
+// ---------------------------------------------------------------------------
+
+function StartingLineupTable({
+  starters,
+  adpMap,
+  onPlayerClick,
+}: {
+  starters: RosterPlayer[];
+  adpMap: Record<string, string | null>;
+  onPlayerClick: (player: RosterPlayer) => void;
+}) {
+  if (starters.length === 0) {
+    return <p className="py-8 text-center text-text-secondary">No roster data available.</p>;
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-xl border border-border">
+      <table className="w-full table-fixed text-sm">
+        <colgroup>
+          <col className="w-[12%]" />
+          <col className="w-[35%]" />
+          <col className="w-[13%]" />
+          <col className="w-[20%]" />
+          <col className="w-[20%]" />
+        </colgroup>
+        <thead>
+          <tr className="border-b border-border bg-surface">
+            <th className="px-4 py-3 text-left font-medium text-text-secondary">Slot</th>
+            <th className="px-4 py-3 text-left font-medium text-text-secondary">Player</th>
+            <th className="px-4 py-3 text-left font-medium text-text-secondary">Pos</th>
+            <th className="px-4 py-3 text-left font-medium text-text-secondary">Team</th>
+            <th className="px-4 py-3 text-right font-medium text-text-secondary">ADP</th>
+          </tr>
+        </thead>
+        <tbody>
+          {starters.map((player) => {
+            const adp = adpMap[player.player_id];
+            return (
+              <tr key={player.id} className="border-b border-border last:border-0">
+                <td className="px-4 py-3 text-xs font-semibold uppercase text-text-secondary">
+                  {player.slot}
+                </td>
+                <td className="px-4 py-3 font-medium text-text-primary">
+                  {player.player_name}
+                </td>
+                <td className="px-4 py-3 text-text-secondary">{player.position}</td>
+                <td className="px-4 py-3 text-text-secondary">{player.team}</td>
+                <td className="px-4 py-3 text-right">
+                  {adp ? (
+                    <button
+                      onClick={() => onPlayerClick(player)}
+                      className="font-score text-accent hover:underline"
+                    >
+                      {adp}
+                    </button>
+                  ) : (
+                    <span className="text-text-secondary">&mdash;</span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Recent Activity (7.5)
+// ---------------------------------------------------------------------------
+
+function RecentActivity({ transactions }: { transactions: Transaction[] }) {
+  if (transactions.length === 0) {
+    return <p className="text-sm text-text-secondary">No recent activity.</p>;
+  }
+
+  return (
+    <div className="space-y-2">
+      {transactions.map((t) => (
+        <div
+          key={t.id}
+          className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface px-4 py-3 sm:justify-between"
+        >
+          <div className="flex items-center gap-3">
+            <TransactionBadge type={t.type} />
+            <span className="font-medium text-text-primary">{t.player_name}</span>
+          </div>
+          <div className="flex items-center gap-3 text-sm text-text-secondary">
+            <span>
+              {t.from_team_name && <>{t.from_team_name} &rarr; </>}
+              {t.to_team_name ?? "Free Agent"}
+            </span>
+            <span>&middot;</span>
+            <span>{relativeTime(t.timestamp)}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TransactionBadge({ type }: { type: string }) {
+  const styles: Record<string, string> = {
+    add: "bg-accent-green/15 text-accent-green",
+    drop: "bg-destructive/15 text-destructive",
+    trade: "bg-accent-orange/15 text-accent-orange",
+    waiver: "bg-accent/15 text-accent",
+  };
+
+  return (
+    <span className={`rounded-md px-2 py-0.5 text-xs font-semibold uppercase ${styles[type] ?? "bg-surface-hover text-text-secondary"}`}>
+      {type}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Roster Tab (existing, preserved)
+// ---------------------------------------------------------------------------
 
 const POSITION_ORDER: Record<string, number> = {
   QB: 0, RB: 1, WR: 2, TE: 3, DEF: 4, K: 5,
@@ -208,7 +639,67 @@ function RosterTable({
                       {adp}
                     </button>
                   ) : (
-                    <span className="text-text-secondary">—</span>
+                    <span className="text-text-secondary">&mdash;</span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function StarterRosterTable({
+  players,
+  adpMap,
+  onPlayerClick,
+}: {
+  players: RosterPlayer[];
+  adpMap: Record<string, string | null>;
+  onPlayerClick: (player: RosterPlayer) => void;
+}) {
+  return (
+    <div className="overflow-x-auto rounded-xl border border-border">
+      <table className="w-full table-fixed text-sm">
+        <colgroup>
+          <col className="w-[12%]" />
+          <col className="w-[35%]" />
+          <col className="w-[13%]" />
+          <col className="w-[20%]" />
+          <col className="w-[20%]" />
+        </colgroup>
+        <thead>
+          <tr className="border-b border-border bg-surface">
+            <th className="px-4 py-3 text-left font-medium text-text-secondary">Slot</th>
+            <th className="px-4 py-3 text-left font-medium text-text-secondary">Player</th>
+            <th className="px-4 py-3 text-left font-medium text-text-secondary">Pos</th>
+            <th className="px-4 py-3 text-left font-medium text-text-secondary">Team</th>
+            <th className="px-4 py-3 text-right font-medium text-text-secondary">ADP</th>
+          </tr>
+        </thead>
+        <tbody>
+          {players.map((player) => {
+            const adp = adpMap[player.player_id];
+            return (
+              <tr key={player.id} className="border-b border-border last:border-0">
+                <td className="px-4 py-3 text-xs font-semibold uppercase text-text-secondary">
+                  {player.slot}
+                </td>
+                <td className="px-4 py-3 font-medium text-text-primary">{player.player_name}</td>
+                <td className="px-4 py-3 text-text-secondary">{player.position}</td>
+                <td className="px-4 py-3 text-text-secondary">{player.team}</td>
+                <td className="px-4 py-3 text-right">
+                  {adp ? (
+                    <button
+                      onClick={() => onPlayerClick(player)}
+                      className="font-score text-accent hover:underline"
+                    >
+                      {adp}
+                    </button>
+                  ) : (
+                    <span className="text-text-secondary">&mdash;</span>
                   )}
                 </td>
               </tr>
@@ -235,10 +726,14 @@ function RosterTab({
 }) {
   const [adpPlayer, setAdpPlayer] = useState<RosterPlayer | null>(null);
 
-  const mainRoster = sortByPosition(
-    roster.filter((p) => p.slot !== "TAXI"),
+  // Starters: have a slot that isn't TAXI — maintain original order from API
+  const starters = roster.filter((p) => p.slot != null && p.slot !== "TAXI");
+  // Bench: no slot assigned — sort by position group + ADP
+  const bench = sortByPosition(
+    roster.filter((p) => p.slot == null),
     adpMap,
   );
+  // Taxi: slot === "TAXI" — sort by position group + ADP
   const taxiSquad = sortByPosition(
     roster.filter((p) => p.slot === "TAXI"),
     adpMap,
@@ -271,7 +766,23 @@ function RosterTab({
         ))}
       </div>
 
-      <RosterTable players={mainRoster} adpMap={adpMap} onPlayerClick={setAdpPlayer} />
+      {starters.length > 0 && (
+        <>
+          <h3 className="mb-3 font-heading text-lg font-semibold text-text-primary">
+            Starters
+          </h3>
+          <StarterRosterTable players={starters} adpMap={adpMap} onPlayerClick={setAdpPlayer} />
+        </>
+      )}
+
+      {bench.length > 0 && (
+        <>
+          <h3 className="mt-6 mb-3 font-heading text-lg font-semibold text-text-primary">
+            Bench
+          </h3>
+          <RosterTable players={bench} adpMap={adpMap} onPlayerClick={setAdpPlayer} />
+        </>
+      )}
 
       {taxiSquad.length > 0 && (
         <>
@@ -295,6 +806,10 @@ function RosterTab({
     </>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Standings Tab (existing, preserved)
+// ---------------------------------------------------------------------------
 
 function StandingsTab({ standings }: { standings: LeagueDetail["standings"] }) {
   if (standings.length === 0) {
@@ -335,6 +850,10 @@ function StandingsTab({ standings }: { standings: LeagueDetail["standings"] }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Matchups Tab (existing, preserved)
+// ---------------------------------------------------------------------------
+
 function MatchupsTab({ matchups }: { matchups: LeagueDetail["recent_matchups"] }) {
   if (matchups.length === 0) {
     return <p className="py-8 text-center text-text-secondary">No matchup data available.</p>;
@@ -365,12 +884,16 @@ function MatchupsTab({ matchups }: { matchups: LeagueDetail["recent_matchups"] }
   );
 }
 
+// ---------------------------------------------------------------------------
+// Transactions Tab (existing, preserved)
+// ---------------------------------------------------------------------------
+
 function TransactionsTab({ transactions }: { transactions: LeagueDetail["recent_transactions"] }) {
   if (transactions.length === 0) {
     return <p className="py-8 text-center text-text-secondary">No transaction data available.</p>;
   }
 
-  function typeLabel(type: string) {
+  function typeColor(type: string) {
     switch (type) {
       case "add":
         return "text-accent-green";
@@ -392,7 +915,7 @@ function TransactionsTab({ transactions }: { transactions: LeagueDetail["recent_
         >
           <div className="flex flex-wrap items-center gap-2 sm:justify-between">
             <div className="flex items-center gap-3">
-              <span className={`text-xs font-semibold uppercase ${typeLabel(t.type)}`}>
+              <span className={`text-xs font-semibold uppercase ${typeColor(t.type)}`}>
                 {t.type}
               </span>
               <span className="font-medium text-text-primary">{t.player_name}</span>
@@ -407,4 +930,38 @@ function TransactionsTab({ transactions }: { transactions: LeagueDetail["recent_
       ))}
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function ordinal(n: number): string {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+
+function formatPoints(value: string): string {
+  const num = parseFloat(value);
+  if (isNaN(num)) return value;
+  return num.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+}
+
+function relativeTime(timestamp: string): string {
+  const now = Date.now();
+  const then = new Date(timestamp).getTime();
+  const diffMs = now - then;
+  const diffSec = Math.floor(diffMs / 1000);
+  const diffMin = Math.floor(diffSec / 60);
+  const diffHr = Math.floor(diffMin / 60);
+  const diffDay = Math.floor(diffHr / 24);
+  const diffWeek = Math.floor(diffDay / 7);
+
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffHr < 24) return `${diffHr}h ago`;
+  if (diffDay < 7) return `${diffDay}d ago`;
+  if (diffWeek < 4) return `${diffWeek}w ago`;
+  return new Date(timestamp).toLocaleDateString();
 }

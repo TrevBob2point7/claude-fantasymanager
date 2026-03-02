@@ -1,5 +1,5 @@
 import { get, post } from "./client";
-import type { DiscoveredLeague, League, LeagueDetail } from "./types";
+import type { DiscoveredLeague, League, LeagueDetail, LeagueSeason } from "./types";
 
 export function getLeagues(season?: number): Promise<League[]> {
   const query = season != null ? `?season=${season}` : "";
@@ -8,6 +8,12 @@ export function getLeagues(season?: number): Promise<League[]> {
 
 export function getLeagueDetail(leagueId: string): Promise<LeagueDetail> {
   return get<LeagueDetail>(`/leagues/${leagueId}`);
+}
+
+export function getLeagueSeasons(
+  leagueId: string,
+): Promise<{ seasons: LeagueSeason[] }> {
+  return get<{ seasons: LeagueSeason[] }>(`/leagues/${leagueId}/seasons`);
 }
 
 export function discoverLeagues(
