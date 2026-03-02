@@ -1,15 +1,9 @@
-"""Contract tests for bye week sync (Phase 0.2).
-
-These tests define the expected behavior for the bye week sync module.
-They will fail until the module and model are implemented (Phases 1.2 + 5).
-"""
+"""Regression tests for bye week sync."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# These imports will fail until Phase 1.2 (model) and Phase 5 (sync module)
-# are implemented — that's intentional for contract tests.
 from app.models.team_bye_week import TeamByeWeek
 from app.sync.bye_weeks import sync_bye_weeks
 from sqlalchemy import select
