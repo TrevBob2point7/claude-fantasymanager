@@ -103,7 +103,7 @@ export default function LeagueDetailPage() {
     );
   }
 
-  const isPastSeason = league.season < getCurrentNflSeason() || league.current_week === 0;
+  const isPastSeason = league.season < getCurrentNflSeason();
   const isCurrentSeason = !isPastSeason;
 
   return (
