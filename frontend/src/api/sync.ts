@@ -14,7 +14,7 @@ export async function triggerSync(
   seasons?: number[],
 ): Promise<SyncResult> {
   const currentSeason = getCurrentNflSeason();
-  const toSync = seasons ?? [currentSeason, currentSeason + 1];
+  const toSync = seasons ?? [currentSeason];
 
   const results = await Promise.all(
     toSync.map((s) => syncOneSeason(accountId, s)),
