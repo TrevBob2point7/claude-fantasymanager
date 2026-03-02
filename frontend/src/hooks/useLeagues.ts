@@ -7,19 +7,19 @@ export function useLeagues(opts?: { season?: number; latest?: boolean }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const cacheKey = opts?.latest ? "latest" : String(opts?.season ?? "");
+  const season = opts?.season;
+  const latest = opts?.latest ?? false;
 
   const refresh = useCallback(() => {
     setLoading(true);
     setError(null);
-    getLeagues(opts)
+    getLeagues({ season, latest })
       .then(setLeagues)
       .catch((err) =>
         setError(err instanceof Error ? err.message : "Failed to load leagues"),
       )
       .finally(() => setLoading(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cacheKey]);
+  }, [season, latest]);
 
   useEffect(() => {
     refresh();
