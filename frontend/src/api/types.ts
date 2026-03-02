@@ -53,6 +53,7 @@ export interface League {
   season: number;
   roster_size: number | null;
   scoring_type: string | null;
+  league_type: string | null;
   team_name: string | null;
   created_at: string;
 }
@@ -70,6 +71,7 @@ export interface Standing {
 
 export interface RosterPlayer {
   id: string;
+  player_id: string;
   player_name: string;
   position: string;
   team: string;

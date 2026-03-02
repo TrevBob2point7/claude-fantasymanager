@@ -53,6 +53,12 @@ class SleeperAdapter(PlatformAdapter):
                 elif rec_pts == 0:
                     scoring_type = "standard"
 
+                # Map Sleeper league type (0=redraft, 1=keeper, 2=dynasty)
+                settings = lg.get("settings", {})
+                type_code = settings.get("type", 0) if settings else 0
+                league_type_map = {0: "redraft", 1: "keeper", 2: "dynasty"}
+                league_type = league_type_map.get(type_code)
+
                 leagues.append(
                     PlatformLeague(
                         league_id=str(lg["league_id"]),
@@ -60,6 +66,7 @@ class SleeperAdapter(PlatformAdapter):
                         season=int(lg.get("season", season)),
                         roster_size=lg.get("roster_positions", None) and len(lg["roster_positions"]),
                         scoring_type=scoring_type,
+                        league_type=league_type,
                         settings=lg.get("settings"),
                     )
                 )
@@ -77,6 +84,7 @@ class SleeperAdapter(PlatformAdapter):
                     owner_id=str(r.get("owner_id", r.get("roster_id", ""))),
                     player_ids=[str(p) for p in (r.get("players") or [])],
                     starters=[str(p) for p in (r.get("starters") or [])],
+                    taxi=[str(p) for p in (r.get("taxi") or [])],
                 )
                 for r in data
             ]

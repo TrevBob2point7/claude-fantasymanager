@@ -16,6 +16,7 @@ Base.metadata.naming_convention = {
 
 import app.models  # noqa: F401, E402 — register all models with Base.metadata
 import pytest_asyncio  # noqa: E402
+from app.api.adp import router as adp_router  # noqa: E402
 from app.api.auth import router as auth_router  # noqa: E402
 from app.api.health import router as health_router  # noqa: E402
 from app.api.leagues import router as leagues_router  # noqa: E402
@@ -51,6 +52,7 @@ def create_test_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    test_app.include_router(adp_router)
     test_app.include_router(health_router)
     test_app.include_router(auth_router)
     test_app.include_router(platforms_router)

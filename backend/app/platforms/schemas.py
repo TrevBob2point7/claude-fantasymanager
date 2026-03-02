@@ -15,6 +15,7 @@ class PlatformLeague:
     season: int
     roster_size: int | None = None
     scoring_type: str | None = None
+    league_type: str | None = None
     settings: dict | None = None
 
 
@@ -23,6 +24,7 @@ class PlatformRosterEntry:
     owner_id: str  # platform roster_id / owner_id
     player_ids: list[str] = field(default_factory=list)
     starters: list[str] = field(default_factory=list)
+    taxi: list[str] = field(default_factory=list)
 
 
 @dataclass

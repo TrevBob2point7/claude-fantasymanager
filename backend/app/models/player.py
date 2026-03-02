@@ -11,6 +11,7 @@ from app.core.database import Base
 from app.models.enums import PlayerStatus, Position
 
 if TYPE_CHECKING:
+    from app.models.player_adp import PlayerADP
     from app.models.player_score import PlayerScore
     from app.models.projected_score import ProjectedScore
     from app.models.roster import Roster
@@ -46,3 +47,4 @@ class Player(Base):
     rosters: Mapped[list[Roster]] = relationship(back_populates="player")
     player_scores: Mapped[list[PlayerScore]] = relationship(back_populates="player")
     projected_scores: Mapped[list[ProjectedScore]] = relationship(back_populates="player")
+    adp_entries: Mapped[list[PlayerADP]] = relationship(back_populates="player")

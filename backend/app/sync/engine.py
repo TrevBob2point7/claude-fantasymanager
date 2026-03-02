@@ -106,6 +106,7 @@ class SyncEngine:
                         season=pl.season,
                         roster_size=pl.roster_size,
                         scoring_type=pl.scoring_type,
+                        league_type=pl.league_type,
                         settings_json=pl.settings,
                     )
                     .on_conflict_do_update(
@@ -114,6 +115,7 @@ class SyncEngine:
                             "name": pl.name,
                             "roster_size": pl.roster_size,
                             "scoring_type": pl.scoring_type,
+                            "league_type": pl.league_type,
                             "settings_json": pl.settings,
                         },
                     )
@@ -202,6 +204,8 @@ class SyncEngine:
                     slot = None
                     if player_id_str in pr.starters:
                         slot = "STARTER"
+                    elif player_id_str in pr.taxi:
+                        slot = "TAXI"
 
                     self.db.add(Roster(
                         user_league_id=ul.id,

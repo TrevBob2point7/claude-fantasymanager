@@ -2,6 +2,7 @@ import { useState, useEffect, type FormEvent } from "react";
 import { getPlatformAccounts, createPlatformAccount, deletePlatformAccount } from "../api/platforms";
 import { discoverLeagues } from "../api/leagues";
 import { triggerSync } from "../api/sync";
+import { syncADP } from "../api/adp";
 import type { PlatformAccount, DiscoveredLeague } from "../api/types";
 
 export default function LinkAccountsPage() {
@@ -22,6 +23,10 @@ export default function LinkAccountsPage() {
   // Sync state
   const [syncingAccount, setSyncingAccount] = useState<string | null>(null);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
+
+  // ADP sync state
+  const [syncingADP, setSyncingADP] = useState(false);
+  const [adpMessage, setAdpMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   useEffect(() => {
     loadAccounts();
@@ -79,6 +84,25 @@ export default function LinkAccountsPage() {
       setDiscoverError(
         err instanceof Error ? err.message : "Failed to discover leagues",
       );
+    }
+  }
+
+  async function handleADPSync() {
+    setSyncingADP(true);
+    setAdpMessage(null);
+    try {
+      const result = await syncADP(new Date().getFullYear());
+      setAdpMessage({
+        type: "success",
+        text: `ADP sync complete: ${result.synced} synced, ${result.skipped} skipped, ${result.errored} errors`,
+      });
+    } catch (err) {
+      setAdpMessage({
+        type: "error",
+        text: err instanceof Error ? err.message : "ADP sync failed",
+      });
+    } finally {
+      setSyncingADP(false);
     }
   }
 
@@ -210,6 +234,36 @@ export default function LinkAccountsPage() {
           {syncMessage}
         </p>
       )}
+
+      {/* ADP Data */}
+      <div className="mt-6 rounded-xl border border-border bg-surface p-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="font-heading text-lg font-semibold text-text-primary">
+              ADP Data
+            </h2>
+            <p className="text-sm text-text-secondary">
+              Fetch latest Average Draft Position rankings.
+            </p>
+          </div>
+          <button
+            onClick={handleADPSync}
+            disabled={syncingADP}
+            className="rounded-md bg-accent px-3 py-2 text-sm font-semibold text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            {syncingADP ? "Syncing…" : "Update ADP"}
+          </button>
+        </div>
+        {adpMessage && (
+          <p className={`mt-3 rounded-md px-3 py-2 text-sm ${
+            adpMessage.type === "success"
+              ? "bg-accent-green/10 text-accent-green"
+              : "bg-destructive/10 text-destructive"
+          }`}>
+            {adpMessage.text}
+          </p>
+        )}
+      </div>
 
       {/* Discovered leagues */}
       {discovered.length > 0 && (

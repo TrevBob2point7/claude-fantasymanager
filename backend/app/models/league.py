@@ -8,7 +8,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
-from app.models.enums import PlatformType, ScoringType
+from app.models.enums import LeagueType, PlatformType, ScoringType
 
 if TYPE_CHECKING:
     from app.models.matchup import Matchup
@@ -35,6 +35,9 @@ class League(Base):
     roster_size: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
     scoring_type: Mapped[ScoringType | None] = mapped_column(
         sa.Enum(ScoringType, name="scoringtype"), nullable=True
+    )
+    league_type: Mapped[LeagueType | None] = mapped_column(
+        sa.Enum(LeagueType, name="leaguetype"), nullable=True
     )
     settings_json: Mapped[dict | None] = mapped_column(sa.JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

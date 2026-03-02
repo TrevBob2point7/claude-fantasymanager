@@ -11,8 +11,11 @@ export default function LeagueCard({ league }: { league: League }) {
         {league.name}
       </h3>
       <p className="mt-1 text-sm text-text-secondary">
-        {league.season} &middot; {league.scoring_type?.toUpperCase() ?? "—"} &middot;{" "}
-        {league.roster_size ?? "—"} roster spots
+        {league.season} &middot; {league.scoring_type?.toUpperCase() ?? "—"}
+        {league.league_type && (
+          <> &middot; <span className="capitalize">{league.league_type}</span></>
+        )}
+        {" "}&middot; {league.roster_size ?? "—"} roster spots
       </p>
       <div className="mt-3 flex items-center justify-between">
         <span className="text-sm text-text-secondary">{league.team_name ?? "My Team"}</span>

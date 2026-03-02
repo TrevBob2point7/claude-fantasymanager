@@ -1,7 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
 import { getLeagueDetail } from "../api/leagues";
-import type { LeagueDetail } from "../api/types";
+import { getRosterADP } from "../api/adp";
+import type { LeagueDetail, RosterPlayer } from "../api/types";
+import PlayerADPModal from "../components/PlayerADPModal";
 
 type Tab = "roster" | "standings" | "matchups" | "transactions";
 
@@ -12,23 +14,57 @@ const tabs: { key: Tab; label: string }[] = [
   { key: "transactions", label: "Transactions" },
 ];
 
+const SCORING_FORMATS = [
+  { value: "ppr", label: "PPR" },
+  { value: "half_ppr", label: "Half PPR" },
+  { value: "standard", label: "Standard" },
+  { value: "superflex", label: "Superflex" },
+  { value: "two_qb", label: "2QB" },
+];
+
 export default function LeagueDetailPage() {
   const { leagueId } = useParams<{ leagueId: string }>();
   const [league, setLeague] = useState<LeagueDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("roster");
+  const [adpFormat, setAdpFormat] = useState<string | null>(null);
+  const [adpMap, setAdpMap] = useState<Record<string, string | null>>({});
 
+  // Fetch league detail when leagueId changes
   useEffect(() => {
     if (!leagueId) return;
     setLoading(true);
+    setAdpMap({});
     getLeagueDetail(leagueId)
-      .then(setLeague)
+      .then((data) => {
+        setLeague(data);
+        // Always derive ADP format from league settings on load
+        if (data.league_type === "dynasty") {
+          setAdpFormat("dynasty");
+        } else {
+          const scoring = data.scoring_type ?? "";
+          setAdpFormat(SCORING_FORMATS.some((f) => f.value === scoring) ? scoring : "ppr");
+        }
+      })
       .catch((err) =>
         setError(err instanceof Error ? err.message : "Failed to load league"),
       )
       .finally(() => setLoading(false));
   }, [leagueId]);
+
+  // Fetch ADP separately — depends on roster player IDs and format
+  const playerIds = useMemo(
+    () => league?.roster.map((p) => p.player_id) ?? [],
+    [league?.roster],
+  );
+
+  useEffect(() => {
+    if (playerIds.length === 0 || !league || adpFormat === null) return;
+    getRosterADP(playerIds, league.season, adpFormat || undefined)
+      .then(setAdpMap)
+      .catch(() => setAdpMap({}));
+  }, [playerIds, league?.season, adpFormat]);
 
   if (loading) {
     return (
@@ -63,8 +99,11 @@ export default function LeagueDetailPage() {
           {league.name}
         </h1>
         <p className="mt-1 text-text-secondary">
-          {league.season} &middot; {league.scoring_type?.toUpperCase() ?? "—"} &middot;{" "}
-          {league.roster_size ?? "—"} roster spots &middot; {league.team_name ?? "My Team"}
+          {league.season} &middot; {league.scoring_type?.toUpperCase() ?? "—"}
+          {league.league_type && (
+            <> &middot; <span className="capitalize">{league.league_type}</span></>
+          )}
+          {" "}&middot; {league.roster_size ?? "—"} roster spots &middot; {league.team_name ?? "My Team"}
         </p>
       </div>
 
@@ -89,7 +128,15 @@ export default function LeagueDetailPage() {
 
       {/* Tab content */}
       <div className="mt-4">
-        {activeTab === "roster" && <RosterTab roster={league.roster} />}
+        {activeTab === "roster" && (
+          <RosterTab
+            roster={league.roster}
+            adpMap={adpMap}
+            adpFormat={adpFormat ?? ""}
+            isDynastyLeague={league.league_type === "dynasty"}
+            onAdpFormatChange={setAdpFormat}
+          />
+        )}
         {activeTab === "standings" && <StandingsTab standings={league.standings} />}
         {activeTab === "matchups" && <MatchupsTab matchups={league.recent_matchups} />}
         {activeTab === "transactions" && (
@@ -100,34 +147,152 @@ export default function LeagueDetailPage() {
   );
 }
 
-function RosterTab({ roster }: { roster: LeagueDetail["roster"] }) {
-  if (roster.length === 0) {
-    return <p className="py-8 text-center text-text-secondary">No roster data available.</p>;
-  }
+const POSITION_ORDER: Record<string, number> = {
+  QB: 0, RB: 1, WR: 2, TE: 3, DEF: 4, K: 5,
+};
 
+function sortByPosition(
+  players: RosterPlayer[],
+  adpMap: Record<string, string | null>,
+): RosterPlayer[] {
+  return [...players].sort((a, b) => {
+    const aOrder = POSITION_ORDER[a.position] ?? 99;
+    const bOrder = POSITION_ORDER[b.position] ?? 99;
+    if (aOrder !== bOrder) return aOrder - bOrder;
+    const aAdp = adpMap[a.player_id] ? parseFloat(adpMap[a.player_id]!) : Infinity;
+    const bAdp = adpMap[b.player_id] ? parseFloat(adpMap[b.player_id]!) : Infinity;
+    return aAdp - bAdp;
+  });
+}
+
+function RosterTable({
+  players,
+  adpMap,
+  onPlayerClick,
+}: {
+  players: RosterPlayer[];
+  adpMap: Record<string, string | null>;
+  onPlayerClick: (player: RosterPlayer) => void;
+}) {
   return (
     <div className="overflow-x-auto rounded-xl border border-border">
-      <table className="w-full text-sm">
+      <table className="w-full table-fixed text-sm">
+        <colgroup>
+          <col className="w-[45%]" />
+          <col className="w-[15%]" />
+          <col className="w-[20%]" />
+          <col className="w-[20%]" />
+        </colgroup>
         <thead>
           <tr className="border-b border-border bg-surface">
             <th className="px-4 py-3 text-left font-medium text-text-secondary">Player</th>
             <th className="px-4 py-3 text-left font-medium text-text-secondary">Pos</th>
             <th className="px-4 py-3 text-left font-medium text-text-secondary">Team</th>
-            <th className="px-4 py-3 text-left font-medium text-text-secondary">Slot</th>
+            <th className="px-4 py-3 text-right font-medium text-text-secondary">ADP</th>
           </tr>
         </thead>
         <tbody>
-          {roster.map((player) => (
-            <tr key={player.id} className="border-b border-border last:border-0">
-              <td className="px-4 py-3 font-medium text-text-primary">{player.player_name}</td>
-              <td className="px-4 py-3 text-text-secondary">{player.position}</td>
-              <td className="px-4 py-3 text-text-secondary">{player.team}</td>
-              <td className="px-4 py-3 text-text-secondary">{player.slot ?? "—"}</td>
-            </tr>
-          ))}
+          {players.map((player) => {
+            const adp = adpMap[player.player_id];
+            return (
+              <tr key={player.id} className="border-b border-border last:border-0">
+                <td className="px-4 py-3 font-medium text-text-primary">{player.player_name}</td>
+                <td className="px-4 py-3 text-text-secondary">{player.position}</td>
+                <td className="px-4 py-3 text-text-secondary">{player.team}</td>
+                <td className="px-4 py-3 text-right">
+                  {adp ? (
+                    <button
+                      onClick={() => onPlayerClick(player)}
+                      className="font-score text-accent hover:underline"
+                    >
+                      {adp}
+                    </button>
+                  ) : (
+                    <span className="text-text-secondary">—</span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
+  );
+}
+
+function RosterTab({
+  roster,
+  adpMap,
+  adpFormat,
+  isDynastyLeague,
+  onAdpFormatChange,
+}: {
+  roster: LeagueDetail["roster"];
+  adpMap: Record<string, string | null>;
+  adpFormat: string;
+  isDynastyLeague: boolean;
+  onAdpFormatChange: (format: string) => void;
+}) {
+  const [adpPlayer, setAdpPlayer] = useState<RosterPlayer | null>(null);
+
+  const mainRoster = sortByPosition(
+    roster.filter((p) => p.slot !== "TAXI"),
+    adpMap,
+  );
+  const taxiSquad = sortByPosition(
+    roster.filter((p) => p.slot === "TAXI"),
+    adpMap,
+  );
+
+  if (roster.length === 0) {
+    return <p className="py-8 text-center text-text-secondary">No roster data available.</p>;
+  }
+
+  return (
+    <>
+      {/* ADP format picker */}
+      <div className="mb-3 flex flex-wrap items-center gap-1.5">
+        <span className="mr-1 text-sm text-text-secondary">ADP:</span>
+        {(isDynastyLeague
+          ? [{ value: "dynasty", label: "Dynasty" }, ...SCORING_FORMATS]
+          : SCORING_FORMATS
+        ).map((fmt) => (
+          <button
+            key={fmt.value}
+            onClick={() => onAdpFormatChange(fmt.value)}
+            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+              adpFormat === fmt.value
+                ? "bg-accent text-background"
+                : "bg-surface-hover text-text-secondary hover:text-text-primary"
+            }`}
+          >
+            {fmt.label}
+          </button>
+        ))}
+      </div>
+
+      <RosterTable players={mainRoster} adpMap={adpMap} onPlayerClick={setAdpPlayer} />
+
+      {taxiSquad.length > 0 && (
+        <>
+          <h3 className="mt-6 mb-3 font-heading text-lg font-semibold text-text-primary">
+            Taxi Squad
+          </h3>
+          <RosterTable players={taxiSquad} adpMap={adpMap} onPlayerClick={setAdpPlayer} />
+        </>
+      )}
+
+      {adpPlayer && (
+        <PlayerADPModal
+          playerId={adpPlayer.player_id}
+          playerName={adpPlayer.player_name}
+          position={adpPlayer.position}
+          team={adpPlayer.team}
+          format={adpFormat}
+          onClose={() => setAdpPlayer(null)}
+        />
+      )}
+    </>
   );
 }
 

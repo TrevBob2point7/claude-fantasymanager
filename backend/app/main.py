@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
+from app.api.adp import router as adp_router
 from app.api.auth import router as auth_router
 from app.api.health import router as health_router
 from app.api.leagues import router as leagues_router
@@ -42,3 +43,4 @@ app.include_router(auth_router)
 app.include_router(platforms_router)
 app.include_router(leagues_router)
 app.include_router(sync_router)
+app.include_router(adp_router)

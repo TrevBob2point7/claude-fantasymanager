@@ -122,6 +122,7 @@ async def list_leagues(
             season=league.season,
             roster_size=league.roster_size,
             scoring_type=league.scoring_type,
+            league_type=league.league_type,
             team_name=team_name,
             created_at=league.created_at,
         )
@@ -190,6 +191,7 @@ async def get_league_detail(
         roster_entries = [
             RosterEntryRead(
                 id=r.id,
+                player_id=r.player_id,
                 player_name=r.player.full_name if r.player else "Unknown",
                 position=r.player.position.value if r.player and r.player.position else None,
                 team=r.player.team if r.player else None,
@@ -253,6 +255,7 @@ async def get_league_detail(
         season=league.season,
         roster_size=league.roster_size,
         scoring_type=league.scoring_type,
+        league_type=league.league_type,
         team_name=team_name,
         created_at=league.created_at,
         standings=standings,
