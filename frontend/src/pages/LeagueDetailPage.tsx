@@ -31,21 +31,20 @@ export default function LeagueDetailPage() {
   const [adpFormat, setAdpFormat] = useState<string | null>(null);
   const [adpMap, setAdpMap] = useState<Record<string, string | null>>({});
 
-  // Fetch league detail once
+  // Fetch league detail when leagueId changes
   useEffect(() => {
     if (!leagueId) return;
     setLoading(true);
+    setAdpMap({});
     getLeagueDetail(leagueId)
       .then((data) => {
         setLeague(data);
-        // Default ADP format based on league settings
-        if (adpFormat === null) {
-          if (data.league_type === "dynasty") {
-            setAdpFormat("dynasty");
-          } else {
-            const scoring = data.scoring_type ?? "";
-            setAdpFormat(SCORING_FORMATS.some((f) => f.value === scoring) ? scoring : "ppr");
-          }
+        // Always derive ADP format from league settings on load
+        if (data.league_type === "dynasty") {
+          setAdpFormat("dynasty");
+        } else {
+          const scoring = data.scoring_type ?? "";
+          setAdpFormat(SCORING_FORMATS.some((f) => f.value === scoring) ? scoring : "ppr");
         }
       })
       .catch((err) =>
