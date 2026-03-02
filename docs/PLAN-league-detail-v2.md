@@ -11,8 +11,8 @@
 | Agent | Role | Phases | Description |
 |---|---|---|---|
 | **lead** | Coordinator | — | Orchestrates tasks, runs migrations, reviews, unblocks |
-| **backend-sync** | Platform adapters & sync engine | 1.1, 2, 3, 4 | Owns the adapter layer, slot inference, and historical sync. Tightly coupled work — one agent keeps full context across adapter → sync → slot inference chain. |
-| **backend-data** | Data modules & API layer | 1.2, 5, 6 | Owns bye week integration (independent of sync work) and all API endpoint changes. Starts on bye weeks immediately, then picks up API work once backend-sync finishes. |
+| **backend-sync** | Platform adapters & sync engine | 0.1, 1.1, 2, 3, 4 | Owns the adapter layer, slot inference, and historical sync. Writes contract tests first, then implements. |
+| **backend-data** | Data modules & API layer | 0.2, 1.2, 5, 6 | Owns bye week integration and all API endpoint changes. Writes contract tests first, then implements. |
 | **frontend** | React UI | 7, 8 | Owns all frontend changes. Starts early with TypeScript types and component scaffolding using mock data. Wires up to real API once phase 6 lands. |
 | **qa-docs** | Quality assurance & documentation | 9 | Validates each phase's output: runs tests, checks integration contracts between agents, updates project documentation. Activates at natural checkpoints between phases. |
 
@@ -21,18 +21,70 @@
 ```
 Time →
 
-backend-sync:  [1.1 migration] → [2 adapter] → [3 slot inference] → [4 historical sync] ──── done
-backend-data:  [1.2 migration] → [5 bye weeks] ──── wait ──── → [6 API changes] ──────────── done
-frontend:      [7.8 types] → [7.1-7.5 scaffold components] ──── wait ──── → [7.6-7.9 wire up] → [8] done
-qa-docs:                 ▲ QA-1          ▲ QA-2                       ▲ QA-3               ▲ QA-4
-                      migrations     sync+bye                        API                 final
+backend-sync:  [0.1 tests] → [1.1 migration] → [2 adapter] → [3 slot inference] → [4 historical sync] ── done
+backend-data:  [0.2 tests] → [1.2 migration] → [5 bye weeks] ──── wait ──── → [6 API changes] ────────── done
+frontend:      ──────────── [7.8 types] → [7.1-7.5 scaffold] ──── wait ──── → [7.6-7.9 wire up] → [8] ── done
+qa-docs:           ▲ QA-0           ▲ QA-1          ▲ QA-2                       ▲ QA-3            ▲ QA-4
+                  tests          migrations      sync+bye                        API              final
 ```
 
 **Key handoff points:**
+- Phase 0 tests are written first by both backend agents in parallel — qa-docs validates they run (all failing) at QA-0
 - backend-data waits for backend-sync to finish phases 3-4 before starting phase 6 (API needs slot + sync changes in place)
 - frontend waits for backend-data to finish phase 6 before wiring up components to real endpoints
 - frontend CAN scaffold all components and update types in parallel with backend work
-- qa-docs activates at 4 checkpoints between phases to validate work and update docs
+- qa-docs activates at 5 checkpoints between phases to validate work and update docs
+
+---
+
+## Phase 0: Test-First Contracts
+
+Write failing tests that define the expected behavior for each phase. These serve as executable specs — agents implement until tests pass. All tests should be runnable (but failing) before any implementation begins.
+
+### Task 0.1: Adapter & Sync Engine Tests
+**Owner: backend-sync**
+
+File: `backend/tests/test_sleeper_adapter.py` (extend existing)
+
+**`get_league()` tests:**
+- `test_get_league_returns_platform_league` — mock Sleeper `GET /league/{id}` response, verify `PlatformLeague` has `previous_league_id` and `roster_positions` populated
+- `test_get_league_missing_previous_league_id` — response without `previous_league_id` → field is `None`
+- `test_get_leagues_includes_new_fields` — verify existing `get_leagues()` also extracts `previous_league_id` and `roster_positions`
+
+File: `backend/tests/test_sync_engine.py` (extend existing)
+
+**Slot inference tests:**
+- `test_sync_rosters_assigns_slot_labels` — given `roster_positions=["QB","RB","RB","WR","WR","TE","FLEX","BN","BN","IR"]` and `starters=["p1","p2","p3","p4","p5","p6","p7"]`, verify slots are `QB, RB, RB, WR, WR, TE, FLEX` (not `"STARTER"`)
+- `test_sync_rosters_empty_roster_positions` — when `roster_positions` is absent from `settings_json`, fall back to `"STARTER"` for backward compatibility
+- `test_sync_rosters_starter_count_mismatch` — fewer starters than starter slots → only assign slots for available starters, rest get `None`
+
+**Historical sync tests:**
+- `test_sync_historical_walks_chain` — mock adapter with 2 past leagues chained via `previous_league_id`, verify all 3 seasons end up in DB
+- `test_sync_historical_skips_existing` — if a past season league already exists in DB, skip it and stop walking
+- `test_sync_historical_handles_no_previous` — league with `previous_league_id=None` → no historical sync attempted
+
+### Task 0.2: Bye Week & API Contract Tests
+**Owner: backend-data**
+
+File: `backend/tests/test_bye_weeks.py` (new)
+
+**Bye week sync tests:**
+- `test_sync_bye_weeks_parses_espn_response` — mock ESPN API response with 2-3 teams, verify `team_bye_weeks` rows are created with correct `season`, `team` (uppercased), `bye_week`
+- `test_sync_bye_weeks_normalizes_team_abbrev` — ESPN returns `"Atl"`, DB stores `"ATL"`
+- `test_sync_bye_weeks_skips_fa_entry` — FA team with `byeWeek=0` is excluded
+- `test_sync_bye_weeks_upserts_on_conflict` — running sync twice for same season updates existing rows
+- `test_sync_bye_weeks_handles_espn_failure` — HTTP error from ESPN raises gracefully (doesn't crash caller)
+
+File: `backend/tests/test_leagues_api.py` (extend existing)
+
+**API contract tests:**
+- `test_league_detail_includes_roster_status` — roster entries include `status` field (from player model)
+- `test_league_detail_includes_bye_week` — roster entries include `bye_week` field (joined from `team_bye_weeks`)
+- `test_league_detail_includes_current_week` — response includes `current_week` field
+- `test_league_detail_roster_has_slot_labels` — roster entries have slot values like `"QB"`, `"FLEX"` (not `"STARTER"`)
+- `test_get_league_seasons_returns_chain` — new endpoint returns `[{season, league_id}]` sorted by season desc
+- `test_get_league_seasons_single_season` — league with no `previous_league_id` returns single-entry list
+- `test_list_leagues_filters_current_season` — `GET /api/leagues` only returns leagues matching current year
 
 ---
 
@@ -337,7 +389,15 @@ Update `DashboardPage.tsx` and/or the `getLeagues()` API call to pass `season=cu
 ## Phase 9: QA & Documentation
 **Owner: qa-docs**
 
-QA runs at four checkpoints between phases. Each checkpoint validates the preceding work, runs tests, and updates documentation.
+QA runs at five checkpoints between phases. Each checkpoint validates the preceding work, runs tests, and updates documentation.
+
+### Checkpoint QA-0: After Test Scaffolding (phases 0.1, 0.2 complete)
+
+- Run `make test-backend` — all new tests should **fail** (they test unimplemented features)
+- Verify no existing tests broke — only the new Phase 0 tests should fail
+- Review test names and assertions against the plan spec for completeness
+- Confirm test files are organized correctly (new file for bye weeks, extensions to existing files)
+- Run `make lint` — tests should be clean even if failing
 
 ### Checkpoint QA-1: After Migrations (phases 1.1, 1.2 complete)
 
@@ -350,7 +410,7 @@ QA runs at four checkpoints between phases. Each checkpoint validates the preced
 
 ### Checkpoint QA-2: After Sync + Bye Weeks (phases 2, 3, 4, 5 complete)
 
-- Run `make test-backend` — all existing tests pass
+- Run `make test-backend` — all Phase 0.1 tests (adapter, slot inference, historical sync) and Phase 0.2 bye week tests should now **pass**
 - **Contract validation** — verify the adapter → sync → DB chain:
   - `PlatformLeague` has `previous_league_id` and `roster_positions`
   - `get_league()` exists on base class and Sleeper implementation
@@ -366,7 +426,7 @@ QA runs at four checkpoints between phases. Each checkpoint validates the preced
 
 ### Checkpoint QA-3: After API Changes (phase 6 complete)
 
-- Run `make test-backend` — all tests pass
+- Run `make test-backend` — **all** Phase 0 tests should now pass (0.1 adapter/sync + 0.2 API contracts)
 - **API contract validation** — verify response shapes match frontend expectations:
   - `RosterEntryRead` includes `status`, `bye_week`, and slot labels
   - `LeagueDetailRead` includes `current_week`
@@ -407,41 +467,43 @@ QA runs at four checkpoints between phases. Each checkpoint validates the preced
 ## Execution Order & Dependencies
 
 ```
-                    ┌─────────────────────────────────────────────────────┐
-                    │                   backend-sync                      │
-                    │                                                     │
-                    │  [1.1 migration] → [2 adapter] → [3 slots] → [4 history]
-                    │                                                     │
-                    └───────┬──────────────────────────────────┬──────────┘
-                            │                                  │ done signal
-                    ┌───────┼──────────────────────────────────▼──────────┐
-                    │       │          backend-data                       │
-                    │       │                                             │
-                    │  [1.2 migration] → [5 bye weeks] → wait → [6 API]  │
-                    │                                                     │
-                    └───────┬──────────────────────────────────┬──────────┘
-                            │                                  │ done signal
-                    ┌───────┼──────────────────────────────────▼──────────┐
-                    │       │           frontend                          │
-                    │       │                                             │
-                    │  [7.8 types] → [7.1-7.5 scaffold] → [7.6-7.9] → [8]
-                    │                                                     │
-                    └───────┬──────────────────────────────────┬──────────┘
-                            │                                  │
-                    ┌───────▼──────────────────────────────────▼──────────┐
-                    │                    qa-docs                           │
-                    │                                                     │
-                    │  [QA-1] ──── [QA-2] ──────────── [QA-3] ── [QA-4]  │
-                    │  migrations   sync+bye             API     final    │
-                    │                                                     │
-                    └─────────────────────────────────────────────────────┘
+                    ┌────────────────────────────────────────────────────────────┐
+                    │                   backend-sync                             │
+                    │                                                            │
+                    │  [0.1 tests] → [1.1 migration] → [2 adapter] → [3 slots] → [4 history]
+                    │                                                            │
+                    └───────┬───────────────────────────────────────────┬────────┘
+                            │                                           │ done signal
+                    ┌───────┼───────────────────────────────────────────▼────────┐
+                    │       │          backend-data                              │
+                    │       │                                                    │
+                    │  [0.2 tests] → [1.2 migration] → [5 bye weeks] → wait → [6 API]
+                    │                                                            │
+                    └───────┬───────────────────────────────────────────┬────────┘
+                            │                                           │ done signal
+                    ┌───────┼───────────────────────────────────────────▼────────┐
+                    │       │           frontend                                 │
+                    │       │                                                    │
+                    │  [7.8 types] → [7.1-7.5 scaffold] → [7.6-7.9] → [8]      │
+                    │                                                            │
+                    └───────┬───────────────────────────────────────────┬────────┘
+                            │                                           │
+                    ┌───────▼───────────────────────────────────────────▼────────┐
+                    │                    qa-docs                                 │
+                    │                                                            │
+                    │  [QA-0] ── [QA-1] ── [QA-2] ──────────── [QA-3] ── [QA-4] │
+                    │  tests    migrations  sync+bye             API     final   │
+                    │                                                            │
+                    └────────────────────────────────────────────────────────────┘
 ```
 
 **Summary:**
-- backend-sync and backend-data start simultaneously (independent migrations)
+- Phase 0 runs first — both backend agents write failing tests in parallel, qa-docs validates at QA-0
+- backend-sync and backend-data then start migrations simultaneously
 - qa-docs runs QA-1 once both migrations land
 - backend-data finishes bye weeks early, then waits for backend-sync
-- qa-docs runs QA-2 once sync + bye weeks are done
+- qa-docs runs QA-2 once sync + bye weeks are done — Phase 0 adapter/sync/bye tests should now pass
 - frontend starts types + scaffolding immediately, waits for API to wire up
-- qa-docs runs QA-3 once API changes land, QA-4 after frontend finishes
+- qa-docs runs QA-3 once API changes land — all Phase 0 tests should pass
+- qa-docs runs QA-4 after frontend finishes
 - All four agents can be active from the start — just with different levels of blocking
