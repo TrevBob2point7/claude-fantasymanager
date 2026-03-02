@@ -307,7 +307,7 @@ function RecordMatchupCard({
               {standing.wins}-{standing.losses}-{standing.ties}
             </span>
             <span className="text-sm text-text-secondary">
-              {ordinal(standing.rank)} of {leagueSize}
+              {standing.rank != null ? `${ordinal(standing.rank)} of ${leagueSize}` : "—"}
             </span>
           </div>
           <div className="flex gap-6 text-sm">
@@ -767,7 +767,7 @@ function StandingsTab({ standings }: { standings: LeagueDetail["standings"] }) {
     return <p className="py-8 text-center text-text-secondary">No standings data available.</p>;
   }
 
-  const sorted = [...standings].sort((a, b) => a.rank - b.rank);
+  const sorted = [...standings].sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity));
 
   return (
     <div className="overflow-x-auto rounded-xl border border-border">
@@ -786,7 +786,7 @@ function StandingsTab({ standings }: { standings: LeagueDetail["standings"] }) {
         <tbody>
           {sorted.map((s) => (
             <tr key={s.id} className={`border-b border-border last:border-0${s.is_me ? " bg-accent/5" : ""}`}>
-              <td className="px-4 py-3 font-score text-lg font-semibold text-accent">{s.rank}</td>
+              <td className="px-4 py-3 font-score text-lg font-semibold text-accent">{s.rank ?? "—"}</td>
               <td className="px-4 py-3 font-medium text-text-primary">
                 {s.team_name ?? "—"}
                 {s.is_me && <span className="ml-2 text-xs text-accent">(You)</span>}

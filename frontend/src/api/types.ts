@@ -66,7 +66,7 @@ export interface Standing {
   ties: number;
   points_for: string;
   points_against: string;
-  rank: number;
+  rank: number | null;
   is_me: boolean;
 }
 
