@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   LineChart,
   Line,
@@ -53,6 +53,19 @@ export default function PlayerADPModal({
       .finally(() => setLoading(false));
   }, [playerId]);
 
+  // Close on Escape key
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    },
+    [onClose],
+  );
+
+  useEffect(() => {
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [handleKeyDown]);
+
   // Group data by season, with one key per source
   const sources = [...new Set(history.map((h) => h.source))];
   const bySeason = new Map<number, Record<string, number>>();
@@ -75,13 +88,16 @@ export default function PlayerADPModal({
       onClick={onClose}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="adp-modal-title"
         className="mx-4 w-full max-w-2xl rounded-xl border border-border bg-surface p-6 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="mb-4 flex items-start justify-between">
           <div>
-            <h2 className="font-heading text-xl font-bold text-text-primary">
+            <h2 id="adp-modal-title" className="font-heading text-xl font-bold text-text-primary">
               {playerName}
             </h2>
             <p className="text-sm text-text-secondary">
@@ -90,6 +106,7 @@ export default function PlayerADPModal({
           </div>
           <button
             onClick={onClose}
+            aria-label="Close"
             className="rounded-md p-1 text-text-secondary transition-colors hover:text-text-primary"
           >
             <svg
