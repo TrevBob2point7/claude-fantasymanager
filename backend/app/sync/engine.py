@@ -21,7 +21,9 @@ from app.models import (
     TransactionType,
     UserLeague,
 )
+from app.models.team_bye_week import TeamByeWeek
 from app.platforms.registry import get_adapter
+from app.sync.bye_weeks import sync_bye_weeks
 from app.sync.player_import import get_or_create_player_by_sleeper_id
 
 logger = logging.getLogger(__name__)
@@ -189,11 +191,25 @@ class SyncEngine:
                     sa.delete(Roster).where(Roster.user_league_id.in_(ul_ids_to_refresh))
                 )
 
+            # Get roster_positions from league settings_json for slot inference
+            roster_positions = (
+                league.settings_json.get("roster_positions", [])
+                if league.settings_json
+                else []
+            )
+            starter_slots = [pos for pos in roster_positions if pos not in ("BN", "IR")]
+
             for pr in platform_rosters:
                 ul = ul_by_platform_id.get(pr.owner_id)
                 if ul is None:
                     # Try to match or create a user_league for this roster owner
                     continue
+
+                # Build starter → slot mapping using position order
+                starter_slot_map: dict[str, str] = {}
+                for i, player_id in enumerate(pr.starters):
+                    if i < len(starter_slots):
+                        starter_slot_map[player_id] = starter_slots[i]
 
                 for player_id_str in pr.player_ids:
                     pdata = players_map.get(player_id_str, {})
@@ -209,7 +225,9 @@ class SyncEngine:
                         team=pdata.get("team"),
                     )
                     slot = None
-                    if player_id_str in pr.starters:
+                    if starter_slots and player_id_str in starter_slot_map:
+                        slot = starter_slot_map[player_id_str]
+                    elif not starter_slots and player_id_str in pr.starters:
                         slot = "STARTER"
                     elif player_id_str in pr.taxi:
                         slot = "TAXI"
