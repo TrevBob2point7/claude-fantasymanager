@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.adp.sync import ADPSyncService
 from app.auth import get_current_user
 from app.core.database import get_db
+from app.models.enums import ADPFormat
 from app.models.player_adp import PlayerADP
 from app.models.user import User
 from app.schemas.adp import ADPSyncResponse, BatchADPRequest, PlayerADPRead
@@ -81,7 +82,7 @@ async def get_batch_adp(
 @router.get("/players/{player_id}/history", response_model=list[PlayerADPRead])
 async def get_player_adp_history(
     player_id: UUID,
-    format: str | None = Query(None),
+    format: ADPFormat | None = Query(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
