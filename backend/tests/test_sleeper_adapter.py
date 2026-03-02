@@ -248,3 +248,90 @@ class TestGetTransactions:
         assert txns[0].type == "trade"
         assert len(txns[0].player_ids_added) == 2
         assert len(txns[0].player_ids_dropped) == 2
+
+
+class TestGetLeague:
+    """Phase 0.1: Contract tests for get_league() — single league fetch."""
+
+    async def test_get_league_returns_platform_league(self):
+        """get_league() returns PlatformLeague with previous_league_id and roster_positions."""
+        async with respx.mock:
+            respx.get(f"{BASE_URL}/league/lg1").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "league_id": "lg1",
+                        "name": "Dynasty League",
+                        "season": "2025",
+                        "previous_league_id": "lg0",
+                        "roster_positions": [
+                            "QB", "RB", "RB", "WR", "WR", "TE", "FLEX",
+                            "BN", "BN", "BN", "BN", "IR",
+                        ],
+                        "scoring_settings": {"rec": 1},
+                        "settings": {"leg": 5, "type": 2},
+                    },
+                )
+            )
+            adapter = SleeperAdapter()
+            league = await adapter.get_league("lg1")
+        assert league.league_id == "lg1"
+        assert league.name == "Dynasty League"
+        assert league.season == 2025
+        assert league.previous_league_id == "lg0"
+        assert league.roster_positions == [
+            "QB", "RB", "RB", "WR", "WR", "TE", "FLEX",
+            "BN", "BN", "BN", "BN", "IR",
+        ]
+        assert league.scoring_type == "ppr"
+
+    async def test_get_league_missing_previous_league_id(self):
+        """Response without previous_league_id → field is None."""
+        async with respx.mock:
+            respx.get(f"{BASE_URL}/league/lg_new").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "league_id": "lg_new",
+                        "name": "New League",
+                        "season": "2025",
+                        "roster_positions": ["QB", "RB", "WR"],
+                        "scoring_settings": {"rec": 0.5},
+                        "settings": {"type": 0},
+                    },
+                )
+            )
+            adapter = SleeperAdapter()
+            league = await adapter.get_league("lg_new")
+        assert league.previous_league_id is None
+
+    async def test_get_leagues_includes_new_fields(self):
+        """get_leagues() also extracts previous_league_id and roster_positions."""
+        async with respx.mock:
+            respx.get(f"{BASE_URL}/user/123/leagues/nfl/2025").mock(
+                return_value=httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "league_id": "lg1",
+                            "name": "Dynasty League",
+                            "season": "2025",
+                            "previous_league_id": "lg0",
+                            "roster_positions": [
+                                "QB", "RB", "RB", "WR", "WR", "TE", "FLEX",
+                                "BN", "BN", "IR",
+                            ],
+                            "scoring_settings": {"rec": 1},
+                            "settings": {"leg": 5, "type": 2},
+                        },
+                    ],
+                )
+            )
+            adapter = SleeperAdapter()
+            leagues = await adapter.get_leagues("123", 2025)
+        assert len(leagues) == 1
+        assert leagues[0].previous_league_id == "lg0"
+        assert leagues[0].roster_positions == [
+            "QB", "RB", "RB", "WR", "WR", "TE", "FLEX",
+            "BN", "BN", "IR",
+        ]

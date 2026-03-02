@@ -8,12 +8,14 @@ from app.models import (
     Matchup,
     PlatformAccount,
     PlatformType,
+    Roster,
     Standing,
     SyncLog,
     SyncStatus,
     Transaction,
     UserLeague,
 )
+from app.models.player import Player
 from app.models.user import User
 from app.platforms.schemas import (
     PlatformLeague,
@@ -341,3 +343,326 @@ class TestSyncAll:
 
         assert result["status"] == "failed"
         assert len(result["errors"]) > 0
+
+
+class TestSyncRostersSlotInference:
+    """Phase 0.1: Contract tests for slot inference in sync_rosters()."""
+
+    async def test_sync_rosters_assigns_slot_labels(self, db_session: AsyncSession):
+        """Given roster_positions in settings_json, starters get actual slot labels."""
+        user = await _create_test_user(db_session)
+
+        # Create league with roster_positions in settings_json
+        league = League(
+            platform_type=PlatformType.sleeper,
+            platform_league_id="lg_slots",
+            name="Slot Test League",
+            season=2025,
+            settings_json={
+                "leg": 1,
+                "roster_positions": [
+                    "QB", "RB", "RB", "WR", "WR", "TE", "FLEX",
+                    "BN", "BN", "IR",
+                ],
+            },
+        )
+        db_session.add(league)
+        await db_session.flush()
+
+        ul = UserLeague(
+            user_id=user.id,
+            league_id=league.id,
+            team_name="Slot Team",
+            platform_team_id="sleeper123",
+        )
+        db_session.add(ul)
+        await db_session.flush()
+
+        mock_adapter = _mock_adapter()
+        mock_adapter.get_rosters.return_value = [
+            PlatformRosterEntry(
+                owner_id="sleeper123",
+                player_ids=["p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9"],
+                starters=["p1", "p2", "p3", "p4", "p5", "p6", "p7"],
+            )
+        ]
+
+        with patch("app.sync.engine.get_adapter", return_value=mock_adapter):
+            engine = SyncEngine(db_session)
+            await engine.sync_rosters(league, user.id)
+
+        result = await db_session.execute(
+            select(Roster).where(Roster.user_league_id == ul.id)
+        )
+        rosters = result.scalars().all()
+
+        # Build a player_id → slot map (need to look up by sleeper_id)
+        slot_by_position = {}
+        for r in rosters:
+            # Get the player's sleeper_id to map back
+            player = await db_session.get(Player, r.player_id)
+            if player and player.sleeper_id:
+                slot_by_position[player.sleeper_id] = r.slot
+
+        # Starters should have actual slot labels, not "STARTER"
+        assert slot_by_position.get("p1") == "QB"
+        assert slot_by_position.get("p2") == "RB"
+        assert slot_by_position.get("p3") == "RB"
+        assert slot_by_position.get("p4") == "WR"
+        assert slot_by_position.get("p5") == "WR"
+        assert slot_by_position.get("p6") == "TE"
+        assert slot_by_position.get("p7") == "FLEX"
+        # Bench players should have no slot
+        assert slot_by_position.get("p8") is None
+        assert slot_by_position.get("p9") is None
+
+    async def test_sync_rosters_empty_roster_positions(self, db_session: AsyncSession):
+        """When roster_positions is absent from settings_json, fall back to STARTER."""
+        user = await _create_test_user(db_session)
+
+        # League without roster_positions in settings
+        league = League(
+            platform_type=PlatformType.sleeper,
+            platform_league_id="lg_no_positions",
+            name="No Positions League",
+            season=2025,
+            settings_json={"leg": 1},
+        )
+        db_session.add(league)
+        await db_session.flush()
+
+        ul = UserLeague(
+            user_id=user.id,
+            league_id=league.id,
+            team_name="No Pos Team",
+            platform_team_id="sleeper123",
+        )
+        db_session.add(ul)
+        await db_session.flush()
+
+        mock_adapter = _mock_adapter()
+        mock_adapter.get_rosters.return_value = [
+            PlatformRosterEntry(
+                owner_id="sleeper123",
+                player_ids=["p1", "p2"],
+                starters=["p1"],
+            )
+        ]
+
+        with patch("app.sync.engine.get_adapter", return_value=mock_adapter):
+            engine = SyncEngine(db_session)
+            await engine.sync_rosters(league, user.id)
+
+        result = await db_session.execute(
+            select(Roster).where(Roster.user_league_id == ul.id)
+        )
+        rosters = result.scalars().all()
+
+        slot_by_sleeper_id = {}
+        for r in rosters:
+            player = await db_session.get(Player, r.player_id)
+            if player and player.sleeper_id:
+                slot_by_sleeper_id[player.sleeper_id] = r.slot
+
+        # Should fall back to "STARTER" when no roster_positions available
+        assert slot_by_sleeper_id.get("p1") == "STARTER"
+        assert slot_by_sleeper_id.get("p2") is None
+
+    async def test_sync_rosters_starter_count_mismatch(self, db_session: AsyncSession):
+        """Fewer starters than starter slots → only assign slots for available starters."""
+        user = await _create_test_user(db_session)
+
+        league = League(
+            platform_type=PlatformType.sleeper,
+            platform_league_id="lg_mismatch",
+            name="Mismatch League",
+            season=2025,
+            settings_json={
+                "leg": 1,
+                "roster_positions": [
+                    "QB", "RB", "RB", "WR", "WR", "TE", "FLEX",
+                    "BN", "BN",
+                ],
+            },
+        )
+        db_session.add(league)
+        await db_session.flush()
+
+        ul = UserLeague(
+            user_id=user.id,
+            league_id=league.id,
+            team_name="Mismatch Team",
+            platform_team_id="sleeper123",
+        )
+        db_session.add(ul)
+        await db_session.flush()
+
+        # Only 3 starters but 7 starter slots in roster_positions
+        mock_adapter = _mock_adapter()
+        mock_adapter.get_rosters.return_value = [
+            PlatformRosterEntry(
+                owner_id="sleeper123",
+                player_ids=["p1", "p2", "p3", "p4", "p5"],
+                starters=["p1", "p2", "p3"],
+            )
+        ]
+
+        with patch("app.sync.engine.get_adapter", return_value=mock_adapter):
+            engine = SyncEngine(db_session)
+            await engine.sync_rosters(league, user.id)
+
+        result = await db_session.execute(
+            select(Roster).where(Roster.user_league_id == ul.id)
+        )
+        rosters = result.scalars().all()
+
+        slot_by_sleeper_id = {}
+        for r in rosters:
+            player = await db_session.get(Player, r.player_id)
+            if player and player.sleeper_id:
+                slot_by_sleeper_id[player.sleeper_id] = r.slot
+
+        # Only 3 starters mapped to first 3 starter slots
+        assert slot_by_sleeper_id.get("p1") == "QB"
+        assert slot_by_sleeper_id.get("p2") == "RB"
+        assert slot_by_sleeper_id.get("p3") == "RB"
+        # Bench players
+        assert slot_by_sleeper_id.get("p4") is None
+        assert slot_by_sleeper_id.get("p5") is None
+
+
+class TestSyncHistoricalSeasons:
+    """Phase 0.1: Contract tests for historical season chain walking."""
+
+    async def test_sync_historical_walks_chain(self, db_session: AsyncSession):
+        """Mock adapter with 2 past leagues chained via previous_league_id → all 3 in DB."""
+        user = await _create_test_user(db_session)
+        account = await _create_platform_account(db_session, user)
+        mock_adapter = _mock_adapter()
+
+        # Current season league
+        mock_adapter.get_leagues.return_value = [
+            PlatformLeague(
+                league_id="lg_2025",
+                name="Dynasty League",
+                season=2025,
+                roster_size=15,
+                scoring_type="ppr",
+                settings={"leg": 1},
+                previous_league_id="lg_2024",
+            )
+        ]
+
+        # Historical leagues returned by get_league()
+        async def mock_get_league(league_id: str):
+            if league_id == "lg_2024":
+                return PlatformLeague(
+                    league_id="lg_2024",
+                    name="Dynasty League",
+                    season=2024,
+                    roster_size=15,
+                    scoring_type="ppr",
+                    settings={"leg": 17},
+                    previous_league_id="lg_2023",
+                )
+            elif league_id == "lg_2023":
+                return PlatformLeague(
+                    league_id="lg_2023",
+                    name="Dynasty League",
+                    season=2023,
+                    roster_size=15,
+                    scoring_type="ppr",
+                    settings={"leg": 17},
+                    previous_league_id=None,
+                )
+            raise ValueError(f"Unknown league: {league_id}")
+
+        mock_adapter.get_league = AsyncMock(side_effect=mock_get_league)
+
+        with patch("app.sync.engine.get_adapter", return_value=mock_adapter):
+            engine = SyncEngine(db_session)
+            leagues = await engine.sync_leagues(user.id, account, 2025)
+            # Trigger historical sync
+            await engine.sync_historical_seasons(leagues[0], user.id, account)
+
+        # All 3 seasons should be in the DB
+        result = await db_session.execute(
+            select(League).where(
+                League.platform_type == PlatformType.sleeper,
+                League.platform_league_id.in_(["lg_2025", "lg_2024", "lg_2023"]),
+            )
+        )
+        db_leagues = result.scalars().all()
+        seasons = sorted([lg.season for lg in db_leagues])
+        assert seasons == [2023, 2024, 2025]
+
+    async def test_sync_historical_skips_existing(self, db_session: AsyncSession):
+        """If a past season league already exists in DB, skip it and stop walking."""
+        user = await _create_test_user(db_session)
+        account = await _create_platform_account(db_session, user)
+
+        # Pre-create the 2024 league in DB
+        existing_league = League(
+            platform_type=PlatformType.sleeper,
+            platform_league_id="lg_2024",
+            name="Dynasty League (old)",
+            season=2024,
+        )
+        db_session.add(existing_league)
+        await db_session.flush()
+
+        mock_adapter = _mock_adapter()
+        mock_adapter.get_leagues.return_value = [
+            PlatformLeague(
+                league_id="lg_2025",
+                name="Dynasty League",
+                season=2025,
+                roster_size=15,
+                scoring_type="ppr",
+                settings={"leg": 1},
+                previous_league_id="lg_2024",
+            )
+        ]
+        mock_adapter.get_league = AsyncMock()
+
+        with patch("app.sync.engine.get_adapter", return_value=mock_adapter):
+            engine = SyncEngine(db_session)
+            leagues = await engine.sync_leagues(user.id, account, 2025)
+            await engine.sync_historical_seasons(leagues[0], user.id, account)
+
+        # get_league should NOT have been called (we skipped because it exists)
+        mock_adapter.get_league.assert_not_called()
+
+    async def test_sync_historical_handles_no_previous(self, db_session: AsyncSession):
+        """League with previous_league_id=None → no historical sync attempted."""
+        user = await _create_test_user(db_session)
+        account = await _create_platform_account(db_session, user)
+        mock_adapter = _mock_adapter()
+
+        # League with no previous_league_id
+        mock_adapter.get_leagues.return_value = [
+            PlatformLeague(
+                league_id="lg_new",
+                name="New League",
+                season=2025,
+                roster_size=10,
+                scoring_type="half_ppr",
+                settings={"leg": 1},
+                previous_league_id=None,
+            )
+        ]
+        mock_adapter.get_league = AsyncMock()
+
+        with patch("app.sync.engine.get_adapter", return_value=mock_adapter):
+            engine = SyncEngine(db_session)
+            leagues = await engine.sync_leagues(user.id, account, 2025)
+            await engine.sync_historical_seasons(leagues[0], user.id, account)
+
+        # get_league should never be called
+        mock_adapter.get_league.assert_not_called()
+
+        # Only the current season league should exist
+        result = await db_session.execute(select(League))
+        db_leagues = result.scalars().all()
+        assert len(db_leagues) == 1
+        assert db_leagues[0].platform_league_id == "lg_new"
