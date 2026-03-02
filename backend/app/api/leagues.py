@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import and_, exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -115,11 +115,20 @@ async def list_leagues(
 
     if latest:
         # Only return leagues whose platform_league_id is NOT referenced
-        # as another league's previous_league_id (i.e. the head of each chain)
-        successor_ids = select(League.previous_league_id).where(
-            League.previous_league_id.isnot(None)
+        # as another league's previous_league_id (i.e. the head of each chain).
+        # Correlated subquery scoped by platform_type to avoid cross-platform collisions.
+        from sqlalchemy.orm import aliased
+        Successor = aliased(League)
+        query = query.where(
+            ~exists(
+                select(Successor.id).where(
+                    and_(
+                        Successor.previous_league_id == League.platform_league_id,
+                        Successor.platform_type == League.platform_type,
+                    )
+                )
+            )
         )
-        query = query.where(League.platform_league_id.notin_(successor_ids))
     elif season is not None:
         query = query.where(League.season == season)
     else:
