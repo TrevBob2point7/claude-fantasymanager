@@ -26,7 +26,7 @@ export default function LinkAccountsPage() {
 
   // ADP sync state
   const [syncingADP, setSyncingADP] = useState(false);
-  const [adpMessage, setAdpMessage] = useState<string | null>(null);
+  const [adpMessage, setAdpMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   useEffect(() => {
     loadAccounts();
@@ -92,11 +92,15 @@ export default function LinkAccountsPage() {
     setAdpMessage(null);
     try {
       const result = await syncADP(new Date().getFullYear());
-      setAdpMessage(
-        `ADP sync complete: ${result.synced} synced, ${result.skipped} skipped, ${result.errored} errors`,
-      );
+      setAdpMessage({
+        type: "success",
+        text: `ADP sync complete: ${result.synced} synced, ${result.skipped} skipped, ${result.errored} errors`,
+      });
     } catch (err) {
-      setAdpMessage(err instanceof Error ? err.message : "ADP sync failed");
+      setAdpMessage({
+        type: "error",
+        text: err instanceof Error ? err.message : "ADP sync failed",
+      });
     } finally {
       setSyncingADP(false);
     }
@@ -251,8 +255,12 @@ export default function LinkAccountsPage() {
           </button>
         </div>
         {adpMessage && (
-          <p className="mt-3 rounded-md bg-accent-green/10 px-3 py-2 text-sm text-accent-green">
-            {adpMessage}
+          <p className={`mt-3 rounded-md px-3 py-2 text-sm ${
+            adpMessage.type === "success"
+              ? "bg-accent-green/10 text-accent-green"
+              : "bg-destructive/10 text-destructive"
+          }`}>
+            {adpMessage.text}
           </p>
         )}
       </div>
