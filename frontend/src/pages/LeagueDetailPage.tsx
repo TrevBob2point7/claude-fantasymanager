@@ -14,13 +14,11 @@ const tabs: { key: Tab; label: string }[] = [
   { key: "transactions", label: "Transactions" },
 ];
 
-const ADP_FORMATS = [
-  { value: "", label: "All" },
+const SCORING_FORMATS = [
   { value: "ppr", label: "PPR" },
   { value: "half_ppr", label: "Half PPR" },
   { value: "standard", label: "Standard" },
   { value: "superflex", label: "Superflex" },
-  { value: "dynasty", label: "Dynasty" },
   { value: "two_qb", label: "2QB" },
 ];
 
@@ -30,7 +28,7 @@ export default function LeagueDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("roster");
-  const [adpFormat, setAdpFormat] = useState("");
+  const [adpFormat, setAdpFormat] = useState<string | null>(null);
   const [adpMap, setAdpMap] = useState<Record<string, string | null>>({});
 
   // Fetch league detail once
@@ -38,7 +36,18 @@ export default function LeagueDetailPage() {
     if (!leagueId) return;
     setLoading(true);
     getLeagueDetail(leagueId)
-      .then(setLeague)
+      .then((data) => {
+        setLeague(data);
+        // Default ADP format based on league settings
+        if (adpFormat === null) {
+          if (data.league_type === "dynasty") {
+            setAdpFormat("dynasty");
+          } else {
+            const scoring = data.scoring_type ?? "";
+            setAdpFormat(SCORING_FORMATS.some((f) => f.value === scoring) ? scoring : "ppr");
+          }
+        }
+      })
       .catch((err) =>
         setError(err instanceof Error ? err.message : "Failed to load league"),
       )
@@ -52,7 +61,7 @@ export default function LeagueDetailPage() {
   );
 
   useEffect(() => {
-    if (playerIds.length === 0 || !league) return;
+    if (playerIds.length === 0 || !league || adpFormat === null) return;
     getRosterADP(playerIds, league.season, adpFormat || undefined)
       .then(setAdpMap)
       .catch(() => setAdpMap({}));
@@ -124,7 +133,8 @@ export default function LeagueDetailPage() {
           <RosterTab
             roster={league.roster}
             adpMap={adpMap}
-            adpFormat={adpFormat}
+            adpFormat={adpFormat ?? ""}
+            isDynastyLeague={league.league_type === "dynasty"}
             onAdpFormatChange={setAdpFormat}
           />
         )}
@@ -215,11 +225,13 @@ function RosterTab({
   roster,
   adpMap,
   adpFormat,
+  isDynastyLeague,
   onAdpFormatChange,
 }: {
   roster: LeagueDetail["roster"];
   adpMap: Record<string, string | null>;
   adpFormat: string;
+  isDynastyLeague: boolean;
   onAdpFormatChange: (format: string) => void;
 }) {
   const [adpPlayer, setAdpPlayer] = useState<RosterPlayer | null>(null);
@@ -242,7 +254,10 @@ function RosterTab({
       {/* ADP format picker */}
       <div className="mb-3 flex flex-wrap items-center gap-1.5">
         <span className="mr-1 text-sm text-text-secondary">ADP:</span>
-        {ADP_FORMATS.map((fmt) => (
+        {(isDynastyLeague
+          ? [{ value: "dynasty", label: "Dynasty" }, ...SCORING_FORMATS]
+          : SCORING_FORMATS
+        ).map((fmt) => (
           <button
             key={fmt.value}
             onClick={() => onAdpFormatChange(fmt.value)}

@@ -129,11 +129,14 @@ League metadata synced from platforms.
 | `scoring_type` | `scoringtype` | YES | — | |
 | `league_type` | `leaguetype` | YES | — | |
 | `settings_json` | JSON | YES | — | Raw platform settings blob |
+| `previous_league_id` | VARCHAR(100) | YES | — | Platform's league ID for the prior season (used to chain seasons together) |
 | `created_at` | TIMESTAMPTZ | NO | `now()` | |
 | `updated_at` | TIMESTAMPTZ | NO | `now()` | Auto-updated |
 
 **Unique constraint:** `(platform_type, platform_league_id, season)`
 **Relationships:** `user_leagues`, `standings`, `matchups`, `player_scores`, `projected_scores`, `transactions`
+
+**Season chaining:** Sleeper (and potentially other platforms) assign different `platform_league_id` values to each season of the same logical league. The `previous_league_id` field stores the platform's league ID for the prior season, forming a linked list: `2025 → 2024 → 2023 → null`. This chain is used to group seasons for the League Detail season selector and Dashboard deduplication.
 
 ---
 
@@ -292,6 +295,23 @@ ADP data per player from multiple sources and formats.
 
 ---
 
+### `team_bye_weeks`
+
+NFL bye week data per team per season. Static data fetched once per season from the ESPN Fantasy API.
+
+| Column | Type | Nullable | Default | Notes |
+|---|---|---|---|---|
+| `id` | UUID | NO | `gen_random_uuid()` | PK |
+| `season` | INTEGER | NO | — | e.g. 2025 |
+| `team` | VARCHAR(10) | NO | — | NFL team abbreviation, uppercase (e.g. "KC", "PHI") |
+| `bye_week` | INTEGER | NO | — | Week number |
+
+**Unique constraint:** `(season, team)`
+
+**Source:** `GET https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/{YEAR}?view=proTeamSchedules_wl` — returns `settings.proTeams[]` with `abbrev` (mixed case, normalize to uppercase) and `byeWeek` fields. Filter out the "FA" entry (`byeWeek: 0`).
+
+---
+
 ### `sync_log`
 
 Sync operation history for tracking and debugging.
@@ -329,6 +349,7 @@ All primary keys have implicit indexes. Additional indexes:
 | `player_scores` | `player_scores_player_id_league_id_week_season_key` | `(player_id, league_id, week, season)` | UNIQUE |
 | `projected_scores` | `projected_scores_player_id_league_id_week_season_key` | `(player_id, league_id, week, season)` | UNIQUE |
 | `player_adp` | `player_adp_player_id_source_format_season_key` | `(player_id, source, format, season)` | UNIQUE |
+| `team_bye_weeks` | `team_bye_weeks_season_team_key` | `(season, team)` | UNIQUE |
 
 ---
 
