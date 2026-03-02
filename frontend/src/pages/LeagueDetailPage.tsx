@@ -9,6 +9,7 @@ import type {
   RosterPlayer,
   Standing,
   Matchup,
+  MatchupPlayer,
   Transaction,
 } from "../api/types";
 import PlayerADPModal from "../components/PlayerADPModal";
@@ -181,7 +182,9 @@ export default function LeagueDetailPage() {
           />
         )}
         {activeTab === "standings" && <StandingsTab standings={league.standings} />}
-        {activeTab === "matchups" && <MatchupsTab matchups={league.recent_matchups} />}
+        {activeTab === "matchups" && (
+          <MatchupsTab matchups={league.recent_matchups} teamName={league.team_name} />
+        )}
         {activeTab === "transactions" && (
           <TransactionsTab transactions={league.recent_transactions} />
         )}
@@ -806,32 +809,152 @@ function StandingsTab({ standings }: { standings: LeagueDetail["standings"] }) {
 // Matchups Tab (existing, preserved)
 // ---------------------------------------------------------------------------
 
-function MatchupsTab({ matchups }: { matchups: LeagueDetail["recent_matchups"] }) {
-  if (matchups.length === 0) {
+function MatchupsTab({ matchups, teamName }: { matchups: LeagueDetail["recent_matchups"]; teamName: string | null }) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const userMatchups = matchups
+    .filter((m) => m.is_user_matchup)
+    .sort((a, b) => a.week - b.week);
+
+  if (userMatchups.length === 0) {
     return <p className="py-8 text-center text-text-secondary">No matchup data available.</p>;
   }
 
   return (
     <div className="space-y-3">
-      {matchups.map((m) => (
-        <div
-          key={m.id}
-          className="rounded-xl border border-border bg-surface p-4"
-        >
-          <p className="mb-2 text-xs font-medium text-text-secondary">Week {m.week}</p>
-          <div className="flex items-center justify-between">
-            <div className="flex-1">
-              <p className="font-medium text-text-primary">{m.home_team_name ?? "TBD"}</p>
-              <p className="font-score text-xl font-semibold text-accent">{m.home_score}</p>
-            </div>
-            <span className="px-4 text-sm text-text-secondary">vs</span>
-            <div className="flex-1 text-right">
-              <p className="font-medium text-text-primary">{m.away_team_name ?? "TBD"}</p>
-              <p className="font-score text-xl font-semibold text-accent">{m.away_score}</p>
-            </div>
+      {userMatchups.map((m) => {
+        const isHome = teamName != null && m.home_team_name === teamName;
+        const myScore = parseFloat(isHome ? m.home_score : m.away_score);
+        const oppScore = parseFloat(isHome ? m.away_score : m.home_score);
+        const oppName = (isHome ? m.away_team_name : m.home_team_name) ?? "TBD";
+        const won = myScore > oppScore;
+        const tied = myScore === oppScore;
+        const played = myScore > 0 || oppScore > 0;
+        const expanded = expandedId === m.id;
+        const hasStarters = m.home_starters != null || m.away_starters != null;
+
+        return (
+          <div
+            key={m.id}
+            className={`rounded-xl border bg-surface ${
+              !played ? "border-border" :
+              won ? "border-accent-green/30" :
+              tied ? "border-border" :
+              "border-destructive/30"
+            }`}
+          >
+            <button
+              type="button"
+              className="w-full p-4 text-left"
+              onClick={() => setExpandedId(expanded ? null : m.id)}
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <p className="text-xs font-medium text-text-secondary">Week {m.week}</p>
+                  {hasStarters && (
+                    <span className="text-xs text-text-secondary">{expanded ? "▲" : "▼"}</span>
+                  )}
+                </div>
+                {played && (
+                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
+                    won ? "bg-accent-green/15 text-accent-green" :
+                    tied ? "bg-surface-hover text-text-secondary" :
+                    "bg-destructive/15 text-destructive"
+                  }`}>
+                    {won ? "W" : tied ? "T" : "L"}
+                  </span>
+                )}
+              </div>
+              <div className="mt-2 flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-text-secondary">vs</p>
+                  <p className="font-medium text-text-primary">{oppName}</p>
+                </div>
+                <div className="text-right">
+                  <p className={`font-score text-xl font-bold ${
+                    !played ? "text-text-secondary" :
+                    won ? "text-accent-green" : tied ? "text-text-primary" : "text-destructive"
+                  }`}>
+                    {myScore.toFixed(1)}
+                  </p>
+                  <p className="font-score text-sm text-text-secondary">
+                    {oppScore.toFixed(1)}
+                  </p>
+                </div>
+              </div>
+            </button>
+            {expanded && hasStarters && (
+              <MatchupStarters
+                homeTeam={m.home_team_name}
+                awayTeam={m.away_team_name}
+                homeStarters={m.home_starters}
+                awayStarters={m.away_starters}
+              />
+            )}
           </div>
-        </div>
-      ))}
+        );
+      })}
+    </div>
+  );
+}
+
+function MatchupStarters({
+  homeTeam,
+  awayTeam,
+  homeStarters,
+  awayStarters,
+}: {
+  homeTeam: string | null;
+  awayTeam: string | null;
+  homeStarters: MatchupPlayer[] | null;
+  awayStarters: MatchupPlayer[] | null;
+}) {
+  return (
+    <div className="border-t border-border px-4 pb-4 pt-3">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <StarterColumn label={homeTeam ?? "Home"} starters={homeStarters} />
+        <StarterColumn label={awayTeam ?? "Away"} starters={awayStarters} />
+      </div>
+    </div>
+  );
+}
+
+function StarterColumn({
+  label,
+  starters,
+}: {
+  label: string;
+  starters: MatchupPlayer[] | null;
+}) {
+  if (!starters || starters.length === 0) {
+    return (
+      <div>
+        <p className="mb-2 text-xs font-semibold uppercase text-text-secondary">{label}</p>
+        <p className="text-sm text-text-secondary">No starter data</p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <p className="mb-2 text-xs font-semibold uppercase text-text-secondary">{label}</p>
+      <div className="space-y-1">
+        {starters.map((s) => (
+          <div key={s.player_id} className="flex items-center justify-between text-sm">
+            <div className="flex items-center gap-2 min-w-0">
+              {s.position && (
+                <span className="w-7 shrink-0 text-xs font-semibold text-text-secondary">
+                  {s.position}
+                </span>
+              )}
+              <span className="truncate text-text-primary">{s.name}</span>
+            </div>
+            <span className="ml-2 shrink-0 font-score text-text-primary">
+              {s.points != null ? s.points.toFixed(1) : "—"}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

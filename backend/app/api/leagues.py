@@ -20,6 +20,7 @@ from app.schemas.league import (
     LeagueRead,
     LeagueSeasonRead,
     LeagueSeasonsResponse,
+    MatchupPlayerRead,
     MatchupRead,
     RosterEntryRead,
     StandingRead,
@@ -225,12 +226,11 @@ async def get_league_detail(
             for r in rosters
         ]
 
-    # Get recent matchups (last 3 weeks)
+    # Get all matchups for the league
     result = await db.execute(
         select(Matchup)
         .where(Matchup.league_id == league_id)
-        .order_by(Matchup.week.desc())
-        .limit(20)
+        .order_by(Matchup.week.asc())
     )
     matchups_raw = result.scalars().all()
 
@@ -250,6 +250,12 @@ async def get_league_detail(
                 m.home_user_league_id == user_league_id
                 or m.away_user_league_id == user_league_id
             ),
+            home_starters=[
+                MatchupPlayerRead(**p) for p in m.home_starters_json
+            ] if m.home_starters_json else None,
+            away_starters=[
+                MatchupPlayerRead(**p) for p in m.away_starters_json
+            ] if m.away_starters_json else None,
         )
         for m in matchups_raw
     ]

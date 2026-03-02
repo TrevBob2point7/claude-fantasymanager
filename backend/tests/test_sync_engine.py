@@ -243,8 +243,14 @@ class TestSyncMatchups:
         await db_session.refresh(ul2)
 
         mock_adapter.get_matchups.return_value = [
-            PlatformMatchup(matchup_id=1, roster_id="1", points=120.5, week=1),
-            PlatformMatchup(matchup_id=1, roster_id="2", points=115.3, week=1),
+            PlatformMatchup(
+                matchup_id=1, roster_id="1", points=120.5, week=1,
+                starters=["p1"], starters_points={"p1": 120.5},
+            ),
+            PlatformMatchup(
+                matchup_id=1, roster_id="2", points=115.3, week=1,
+                starters=["p2"], starters_points={"p2": 115.3},
+            ),
         ]
 
         with patch("app.sync.engine.get_adapter", return_value=mock_adapter):
@@ -257,6 +263,13 @@ class TestSyncMatchups:
         # Home/away assigned by sorted roster_id: "1" < "2"
         assert float(matchups[0].home_score) == 120.5
         assert float(matchups[0].away_score) == 115.3
+        # Starters JSON should be populated
+        assert matchups[0].home_starters_json is not None
+        assert len(matchups[0].home_starters_json) == 1
+        assert matchups[0].home_starters_json[0]["player_id"] == "p1"
+        assert matchups[0].home_starters_json[0]["points"] == 120.5
+        assert matchups[0].away_starters_json is not None
+        assert matchups[0].away_starters_json[0]["player_id"] == "p2"
 
 
 class TestSyncStandings:

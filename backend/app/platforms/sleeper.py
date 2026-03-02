@@ -125,15 +125,33 @@ class SleeperAdapter(PlatformAdapter):
             data = resp.json()
             if not data:
                 return []
-            return [
-                PlatformMatchup(
-                    matchup_id=m.get("matchup_id", 0),
-                    roster_id=str(m.get("roster_id", "")),
-                    points=m.get("points"),
-                    week=week,
+            results = []
+            for m in data:
+                starters = [str(s) for s in (m.get("starters") or [])]
+                raw_points = m.get("starters_points") or []
+                # Sleeper returns starters_points as a parallel list, not a dict
+                starters_points: dict[str, float] = {}
+                if isinstance(raw_points, list):
+                    for i, pts in enumerate(raw_points):
+                        if i < len(starters) and pts is not None:
+                            starters_points[starters[i]] = float(pts)
+                elif isinstance(raw_points, dict):
+                    starters_points = {
+                        str(k): float(v)
+                        for k, v in raw_points.items()
+                        if v is not None
+                    }
+                results.append(
+                    PlatformMatchup(
+                        matchup_id=m.get("matchup_id", 0),
+                        roster_id=str(m.get("roster_id", "")),
+                        points=m.get("points"),
+                        week=week,
+                        starters=starters,
+                        starters_points=starters_points,
+                    )
                 )
-                for m in data
-            ]
+            return results
 
     async def get_transactions(self, league_id: str, week: int) -> list[PlatformTransaction]:
         async with httpx.AsyncClient(base_url=BASE_URL, timeout=_CLIENT_TIMEOUT) as client:

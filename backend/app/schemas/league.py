@@ -63,6 +63,13 @@ class RosterEntryRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class MatchupPlayerRead(BaseModel):
+    player_id: str
+    name: str
+    position: str | None = None
+    points: float | None = None
+
+
 class MatchupRead(BaseModel):
     id: UUID
     week: int
@@ -71,6 +78,8 @@ class MatchupRead(BaseModel):
     home_score: Decimal | None
     away_score: Decimal | None
     is_user_matchup: bool = False
+    home_starters: list[MatchupPlayerRead] | None = None
+    away_starters: list[MatchupPlayerRead] | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

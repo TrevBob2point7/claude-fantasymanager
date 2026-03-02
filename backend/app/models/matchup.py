@@ -33,6 +33,8 @@ class Matchup(Base):
     )
     home_score: Mapped[decimal.Decimal | None] = mapped_column(sa.Numeric(10, 2), nullable=True)
     away_score: Mapped[decimal.Decimal | None] = mapped_column(sa.Numeric(10, 2), nullable=True)
+    home_starters_json: Mapped[list | None] = mapped_column(sa.JSON, nullable=True)
+    away_starters_json: Mapped[list | None] = mapped_column(sa.JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
     )

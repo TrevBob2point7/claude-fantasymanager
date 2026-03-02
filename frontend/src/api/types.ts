@@ -81,6 +81,13 @@ export interface RosterPlayer {
   bye_week: number | null;
 }
 
+export interface MatchupPlayer {
+  player_id: string;
+  name: string;
+  position: string | null;
+  points: number | null;
+}
+
 export interface Matchup {
   id: string;
   week: number;
@@ -89,6 +96,8 @@ export interface Matchup {
   home_score: string;
   away_score: string;
   is_user_matchup: boolean;
+  home_starters: MatchupPlayer[] | null;
+  away_starters: MatchupPlayer[] | null;
 }
 
 export interface Transaction {

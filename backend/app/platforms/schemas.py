@@ -43,6 +43,8 @@ class PlatformMatchup:
     roster_id: str
     points: float | None = None
     week: int = 0
+    starters: list[str] = field(default_factory=list)
+    starters_points: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass

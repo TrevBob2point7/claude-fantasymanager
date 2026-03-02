@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 from datetime import UTC, datetime
@@ -24,6 +26,7 @@ from app.models import (
 )
 from app.models.team_bye_week import TeamByeWeek
 from app.platforms.registry import get_adapter
+from app.platforms.schemas import PlatformMatchup as PlatformMatchupSchema
 from app.sync.bye_weeks import sync_bye_weeks
 from app.sync.player_import import get_or_create_player_by_sleeper_id
 
@@ -291,12 +294,44 @@ class SyncEngine:
             await self._log_error(log, str(e))
             raise
 
-    async def sync_matchups(self, league: League, user_id: UUID, week: int) -> None:
+    def _build_starters_json(
+        self,
+        pm: PlatformMatchupSchema,
+        players_map: dict[str, dict],
+    ) -> list[dict] | None:
+        """Build starters JSON from a PlatformMatchup's starters data."""
+        if not pm.starters:
+            return None
+        result = []
+        for pid in pm.starters:
+            pdata = players_map.get(pid, {})
+            name = (
+                f"{pdata.get('first_name', '')} {pdata.get('last_name', '')}".strip()
+                or pdata.get("full_name", "Unknown")
+            )
+            result.append({
+                "player_id": pid,
+                "name": name,
+                "position": pdata.get("position"),
+                "points": pm.starters_points.get(pid),
+            })
+        return result
+
+    async def sync_matchups(
+        self,
+        league: League,
+        user_id: UUID,
+        week: int,
+        players_map: dict[str, dict] | None = None,
+    ) -> None:
         """Sync matchups for a league week."""
         log = await self._log_start(user_id, league.platform_type, DataType.matchups)
         try:
             adapter = get_adapter(league.platform_type)
             platform_matchups = await adapter.get_matchups(league.platform_league_id, week)
+
+            if players_map is None:
+                players_map = {}
 
             # Get user_leagues for this league
             result = await self.db.execute(
@@ -324,6 +359,9 @@ class SyncEngine:
                 if not home_ul or not away_ul:
                     continue
 
+                home_starters = self._build_starters_json(home, players_map)
+                away_starters = self._build_starters_json(away, players_map)
+
                 # Check if matchup already exists
                 existing = await self.db.execute(
                     select(Matchup).where(
@@ -345,6 +383,8 @@ class SyncEngine:
                 if matchup:
                     matchup.home_score = home.points
                     matchup.away_score = away.points
+                    matchup.home_starters_json = home_starters
+                    matchup.away_starters_json = away_starters
                 else:
                     matchup = Matchup(
                         league_id=league.id,
@@ -353,6 +393,8 @@ class SyncEngine:
                         away_user_league_id=away_ul.id,
                         home_score=home.points,
                         away_score=away.points,
+                        home_starters_json=home_starters,
+                        away_starters_json=away_starters,
                     )
                     self.db.add(matchup)
 
@@ -633,7 +675,9 @@ class SyncEngine:
             current_week = settings_json.get("leg", 17) if settings_json else 17
             for week in range(1, min(current_week + 1, 19)):
                 try:
-                    await self.sync_matchups(db_league, user_id, week)
+                    await self.sync_matchups(
+                        db_league, user_id, week, players_map=players_map
+                    )
                 except Exception:
                     logger.exception(
                         "Failed to sync matchups week %d for historical league %s",
@@ -717,7 +761,9 @@ class SyncEngine:
             current_week = league.settings_json.get("leg", 1) if league.settings_json else 1
             for week in range(1, min(current_week + 1, 19)):
                 try:
-                    await self.sync_matchups(league, user_id, week)
+                    await self.sync_matchups(
+                        league, user_id, week, players_map=players_map
+                    )
                 except Exception as e:
                     errors.append(f"matchups({league.name}, week {week}): {e}")
                     logger.exception("Failed to sync matchups week %d", week)
