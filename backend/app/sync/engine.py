@@ -96,6 +96,11 @@ class SyncEngine:
             platform_leagues = await adapter.get_leagues(platform_user_id, season)
             leagues = []
             for pl in platform_leagues:
+                # Merge roster_positions into settings_json
+                settings_json = {**(pl.settings or {})}
+                if pl.roster_positions is not None:
+                    settings_json["roster_positions"] = pl.roster_positions
+
                 # Upsert league
                 stmt = (
                     pg_insert(League)
@@ -107,7 +112,8 @@ class SyncEngine:
                         roster_size=pl.roster_size,
                         scoring_type=pl.scoring_type,
                         league_type=pl.league_type,
-                        settings_json=pl.settings,
+                        settings_json=settings_json,
+                        previous_league_id=pl.previous_league_id,
                     )
                     .on_conflict_do_update(
                         index_elements=["platform_type", "platform_league_id", "season"],
@@ -116,7 +122,8 @@ class SyncEngine:
                             "roster_size": pl.roster_size,
                             "scoring_type": pl.scoring_type,
                             "league_type": pl.league_type,
-                            "settings_json": pl.settings,
+                            "settings_json": settings_json,
+                            "previous_league_id": pl.previous_league_id,
                         },
                     )
                     .returning(League)

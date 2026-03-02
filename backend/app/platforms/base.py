@@ -14,6 +14,9 @@ class PlatformAdapter(ABC):
     async def get_user(self, username: str) -> PlatformUser: ...
 
     @abstractmethod
+    async def get_league(self, league_id: str) -> PlatformLeague: ...
+
+    @abstractmethod
     async def get_leagues(self, user_id: str, season: int) -> list[PlatformLeague]: ...
 
     @abstractmethod

@@ -34,6 +34,46 @@ class SleeperAdapter(PlatformAdapter):
                 display_name=data.get("display_name"),
             )
 
+    def _parse_league(self, lg: dict, season: int | None = None) -> PlatformLeague:
+        """Parse a Sleeper league JSON object into a PlatformLeague."""
+        scoring = lg.get("scoring_settings", {})
+        scoring_type = "custom"
+        rec_pts = scoring.get("rec", 0)
+        if rec_pts == 1:
+            scoring_type = "ppr"
+        elif rec_pts == 0.5:
+            scoring_type = "half_ppr"
+        elif rec_pts == 0:
+            scoring_type = "standard"
+
+        settings = lg.get("settings", {})
+        type_code = settings.get("type", 0) if settings else 0
+        league_type_map = {0: "redraft", 1: "keeper", 2: "dynasty"}
+        league_type = league_type_map.get(type_code)
+
+        roster_positions = lg.get("roster_positions")
+
+        return PlatformLeague(
+            league_id=str(lg["league_id"]),
+            name=lg.get("name", "Unnamed League"),
+            season=int(lg.get("season", season or 0)),
+            roster_size=len(roster_positions) if roster_positions else None,
+            scoring_type=scoring_type,
+            league_type=league_type,
+            settings=lg.get("settings"),
+            previous_league_id=lg.get("previous_league_id"),
+            roster_positions=roster_positions,
+        )
+
+    async def get_league(self, league_id: str) -> PlatformLeague:
+        async with httpx.AsyncClient(base_url=BASE_URL, timeout=_CLIENT_TIMEOUT) as client:
+            resp = await client.get(f"/league/{league_id}")
+            resp.raise_for_status()
+            data = resp.json()
+            if not data:
+                raise ValueError(f"League '{league_id}' not found on Sleeper")
+            return self._parse_league(data)
+
     async def get_leagues(self, user_id: str, season: int) -> list[PlatformLeague]:
         async with httpx.AsyncClient(base_url=BASE_URL, timeout=_CLIENT_TIMEOUT) as client:
             resp = await client.get(f"/user/{user_id}/leagues/nfl/{season}")
@@ -41,36 +81,7 @@ class SleeperAdapter(PlatformAdapter):
             data = resp.json()
             if not data:
                 return []
-            leagues = []
-            for lg in data:
-                scoring = lg.get("scoring_settings", {})
-                scoring_type = "custom"
-                rec_pts = scoring.get("rec", 0)
-                if rec_pts == 1:
-                    scoring_type = "ppr"
-                elif rec_pts == 0.5:
-                    scoring_type = "half_ppr"
-                elif rec_pts == 0:
-                    scoring_type = "standard"
-
-                # Map Sleeper league type (0=redraft, 1=keeper, 2=dynasty)
-                settings = lg.get("settings", {})
-                type_code = settings.get("type", 0) if settings else 0
-                league_type_map = {0: "redraft", 1: "keeper", 2: "dynasty"}
-                league_type = league_type_map.get(type_code)
-
-                leagues.append(
-                    PlatformLeague(
-                        league_id=str(lg["league_id"]),
-                        name=lg.get("name", "Unnamed League"),
-                        season=int(lg.get("season", season)),
-                        roster_size=lg.get("roster_positions", None) and len(lg["roster_positions"]),
-                        scoring_type=scoring_type,
-                        league_type=league_type,
-                        settings=lg.get("settings"),
-                    )
-                )
-            return leagues
+            return [self._parse_league(lg, season) for lg in data]
 
     async def get_rosters(self, league_id: str) -> list[PlatformRosterEntry]:
         async with httpx.AsyncClient(base_url=BASE_URL, timeout=_CLIENT_TIMEOUT) as client:

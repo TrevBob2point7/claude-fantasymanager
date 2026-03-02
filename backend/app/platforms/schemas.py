@@ -17,6 +17,8 @@ class PlatformLeague:
     scoring_type: str | None = None
     league_type: str | None = None
     settings: dict | None = None
+    previous_league_id: str | None = None
+    roster_positions: list[str] | None = None
 
 
 @dataclass
