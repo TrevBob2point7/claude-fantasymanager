@@ -208,8 +208,8 @@ function OverviewTab({
     ? [...league.standings].sort((a, b) => a.rank - b.rank)[0]
     : null;
 
-  const starters = league.roster.filter(
-    (p) => p.slot != null && p.slot !== "TAXI",
+  const starters = sortBySlot(
+    league.roster.filter((p) => p.slot != null && p.slot !== "TAXI"),
   );
 
   const recentTransactions = league.recent_transactions.slice(0, 5);
@@ -582,6 +582,18 @@ const POSITION_ORDER: Record<string, number> = {
   QB: 0, RB: 1, WR: 2, TE: 3, DEF: 4, K: 5,
 };
 
+const SLOT_ORDER: Record<string, number> = {
+  QB: 0, RB: 1, WR: 2, TE: 3, FLEX: 4, SUPERFLEX: 5, K: 6, PK: 6, DEF: 7,
+};
+
+function sortBySlot(players: RosterPlayer[]): RosterPlayer[] {
+  return [...players].sort((a, b) => {
+    const aOrder = SLOT_ORDER[a.slot ?? ""] ?? 99;
+    const bOrder = SLOT_ORDER[b.slot ?? ""] ?? 99;
+    return aOrder - bOrder;
+  });
+}
+
 function sortByPosition(
   players: RosterPlayer[],
   adpMap: Record<string, string | null>,
@@ -651,66 +663,6 @@ function RosterTable({
   );
 }
 
-function StarterRosterTable({
-  players,
-  adpMap,
-  onPlayerClick,
-}: {
-  players: RosterPlayer[];
-  adpMap: Record<string, string | null>;
-  onPlayerClick: (player: RosterPlayer) => void;
-}) {
-  return (
-    <div className="overflow-x-auto rounded-xl border border-border">
-      <table className="w-full table-fixed text-sm">
-        <colgroup>
-          <col className="w-[12%]" />
-          <col className="w-[35%]" />
-          <col className="w-[13%]" />
-          <col className="w-[20%]" />
-          <col className="w-[20%]" />
-        </colgroup>
-        <thead>
-          <tr className="border-b border-border bg-surface">
-            <th className="px-4 py-3 text-left font-medium text-text-secondary">Slot</th>
-            <th className="px-4 py-3 text-left font-medium text-text-secondary">Player</th>
-            <th className="px-4 py-3 text-left font-medium text-text-secondary">Pos</th>
-            <th className="px-4 py-3 text-left font-medium text-text-secondary">Team</th>
-            <th className="px-4 py-3 text-right font-medium text-text-secondary">ADP</th>
-          </tr>
-        </thead>
-        <tbody>
-          {players.map((player) => {
-            const adp = adpMap[player.player_id];
-            return (
-              <tr key={player.id} className="border-b border-border last:border-0">
-                <td className="px-4 py-3 text-xs font-semibold uppercase text-text-secondary">
-                  {player.slot}
-                </td>
-                <td className="px-4 py-3 font-medium text-text-primary">{player.player_name}</td>
-                <td className="px-4 py-3 text-text-secondary">{player.position}</td>
-                <td className="px-4 py-3 text-text-secondary">{player.team}</td>
-                <td className="px-4 py-3 text-right">
-                  {adp ? (
-                    <button
-                      onClick={() => onPlayerClick(player)}
-                      className="font-score text-accent hover:underline"
-                    >
-                      {adp}
-                    </button>
-                  ) : (
-                    <span className="text-text-secondary">&mdash;</span>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 function RosterTab({
   roster,
   adpMap,
@@ -726,11 +678,9 @@ function RosterTab({
 }) {
   const [adpPlayer, setAdpPlayer] = useState<RosterPlayer | null>(null);
 
-  // Starters: have a slot that isn't TAXI — maintain original order from API
-  const starters = roster.filter((p) => p.slot != null && p.slot !== "TAXI");
-  // Bench: no slot assigned — sort by position group + ADP
-  const bench = sortByPosition(
-    roster.filter((p) => p.slot == null),
+  // Main roster: everyone except taxi — sort by position group + ADP
+  const mainRoster = sortByPosition(
+    roster.filter((p) => p.slot !== "TAXI"),
     adpMap,
   );
   // Taxi: slot === "TAXI" — sort by position group + ADP
@@ -766,21 +716,12 @@ function RosterTab({
         ))}
       </div>
 
-      {starters.length > 0 && (
+      {mainRoster.length > 0 && (
         <>
           <h3 className="mb-3 font-heading text-lg font-semibold text-text-primary">
-            Starters
+            Roster
           </h3>
-          <StarterRosterTable players={starters} adpMap={adpMap} onPlayerClick={setAdpPlayer} />
-        </>
-      )}
-
-      {bench.length > 0 && (
-        <>
-          <h3 className="mt-6 mb-3 font-heading text-lg font-semibold text-text-primary">
-            Bench
-          </h3>
-          <RosterTable players={bench} adpMap={adpMap} onPlayerClick={setAdpPlayer} />
+          <RosterTable players={mainRoster} adpMap={adpMap} onPlayerClick={setAdpPlayer} />
         </>
       )}
 
