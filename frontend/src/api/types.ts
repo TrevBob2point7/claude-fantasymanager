@@ -94,8 +94,8 @@ export interface Matchup {
   week: number;
   home_team_name: string | null;
   away_team_name: string | null;
-  home_score: string;
-  away_score: string;
+  home_score: string | null;
+  away_score: string | null;
   is_user_matchup: boolean;
   home_starters: MatchupPlayer[] | null;
   away_starters: MatchupPlayer[] | null;
