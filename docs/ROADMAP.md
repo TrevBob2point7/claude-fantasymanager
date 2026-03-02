@@ -9,10 +9,17 @@
 - [x] Unified "My Teams" dashboard
 - [x] Per-league detail view
 - [x] Manual and scheduled background sync
+- [x] ADP integration (FFC, DynastyProcess, Sleeper providers)
+- [x] Format-specific ADP display per league
+- [x] League Detail Overview tab (record, roster alerts, starting lineup, recent activity)
+- [x] Roster slot inference (QB, RB, FLEX labels instead of generic "STARTER")
+- [x] Historical season sync via `previous_league_id` chain walking
+- [x] Season selector for browsing past seasons within a league
+- [x] Bye week sync from ESPN Fantasy API with roster alerts
+- [x] Dashboard deduplication (current season only)
+- [x] Roster tab with Starters / Bench / Taxi sections
 - [ ] Mobile-responsive UI
-- [ ] ADP integration (in progress on `feat/adp-integration` branch)
 - [ ] Support all league types: redraft, dynasty, guillotine, best ball
-- [ ] Format-specific ADP display per league
 
 ---
 
@@ -23,7 +30,7 @@
 - Waiver wire recommendations
 - Weekly recap / power rankings
 - Push notifications
-- League history / year-over-year analysis
+- League year-over-year analysis (historical data is synced; analysis views are future work)
 - Draft assistant with live ADP rankings
 - Player stats detail view (weekly breakdowns from Sleeper stats endpoint)
 

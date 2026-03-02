@@ -79,6 +79,7 @@ def _mock_adapter():
             starters=["p1"],
         )
     ]
+    adapter.get_players_map.return_value = {}
     adapter.get_matchups.return_value = []
     adapter.get_transactions.return_value = []
     return adapter

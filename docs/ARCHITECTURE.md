@@ -70,6 +70,9 @@ Custom JWT auth using FastAPI's `OAuth2PasswordBearer` with `python-jose` for to
 - Scheduled background sync with configurable per-data-type frequency (APScheduler)
 - Manual "Sync Now" endpoint triggered from the UI
 - Sync log tracking (last sync time, status, errors per data type)
+- **Slot inference:** During roster sync, the engine reads `roster_positions` from the league's `settings_json` and zips starter IDs with their positional slots (QB, RB, FLEX, etc.) instead of storing a generic "STARTER" label
+- **Historical season sync:** On first sync, the engine walks the `previous_league_id` chain to discover and sync all past seasons of a league. Seasons already in the DB are skipped. This enables the League Detail season selector.
+- **Bye week sync:** NFL bye weeks are fetched once per season from the ESPN Fantasy API (`proTeamSchedules_wl` view) and stored in the `team_bye_weeks` table. Team abbreviations are normalized to uppercase. ESPN failures are caught and do not block the main sync.
 
 ### Database as Cache Layer
 
@@ -106,4 +109,5 @@ Docker Compose on home server with three services: FastAPI backend, React fronte
 | `player_scores` | Actual player scoring data |
 | `projected_scores` | Player projections |
 | `transactions` | Trades, waivers, add/drops |
+| `team_bye_weeks` | NFL bye week data per team per season (from ESPN Fantasy API) |
 | `sync_log` | Sync history (timestamps, status, errors) |

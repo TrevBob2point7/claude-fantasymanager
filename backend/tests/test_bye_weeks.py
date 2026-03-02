@@ -4,7 +4,7 @@ These tests define the expected behavior for the bye week sync module.
 They will fail until the module and model are implemented (Phases 1.2 + 5).
 """
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -36,10 +36,10 @@ class TestSyncByeWeeks:
     async def test_sync_bye_weeks_parses_espn_response(self, db_session: AsyncSession):
         """Mock ESPN API response with 2-3 teams, verify team_bye_weeks rows
         are created with correct season, team (uppercased), bye_week."""
-        mock_response = AsyncMock()
+        mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = ESPN_RESPONSE
-        mock_response.raise_for_status = AsyncMock()
+        mock_response.raise_for_status = MagicMock()
 
         with patch("app.sync.bye_weeks.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
@@ -67,7 +67,7 @@ class TestSyncByeWeeks:
         self, db_session: AsyncSession
     ):
         """ESPN returns 'Atl', DB stores 'ATL'."""
-        mock_response = AsyncMock()
+        mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "settings": {
@@ -76,7 +76,7 @@ class TestSyncByeWeeks:
                 ]
             }
         }
-        mock_response.raise_for_status = AsyncMock()
+        mock_response.raise_for_status = MagicMock()
 
         with patch("app.sync.bye_weeks.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
@@ -98,7 +98,7 @@ class TestSyncByeWeeks:
 
     async def test_sync_bye_weeks_skips_fa_entry(self, db_session: AsyncSession):
         """FA team with byeWeek=0 is excluded."""
-        mock_response = AsyncMock()
+        mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "settings": {
@@ -108,7 +108,7 @@ class TestSyncByeWeeks:
                 ]
             }
         }
-        mock_response.raise_for_status = AsyncMock()
+        mock_response.raise_for_status = MagicMock()
 
         with patch("app.sync.bye_weeks.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
@@ -137,7 +137,7 @@ class TestSyncByeWeeks:
         self, db_session: AsyncSession
     ):
         """Running sync twice for same season updates existing rows."""
-        mock_response_v1 = AsyncMock()
+        mock_response_v1 = MagicMock()
         mock_response_v1.status_code = 200
         mock_response_v1.json.return_value = {
             "settings": {
@@ -146,9 +146,9 @@ class TestSyncByeWeeks:
                 ]
             }
         }
-        mock_response_v1.raise_for_status = AsyncMock()
+        mock_response_v1.raise_for_status = MagicMock()
 
-        mock_response_v2 = AsyncMock()
+        mock_response_v2 = MagicMock()
         mock_response_v2.status_code = 200
         mock_response_v2.json.return_value = {
             "settings": {
@@ -157,7 +157,7 @@ class TestSyncByeWeeks:
                 ]
             }
         }
-        mock_response_v2.raise_for_status = AsyncMock()
+        mock_response_v2.raise_for_status = MagicMock()
 
         with patch("app.sync.bye_weeks.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()

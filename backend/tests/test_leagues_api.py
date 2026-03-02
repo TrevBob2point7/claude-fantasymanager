@@ -101,7 +101,7 @@ class TestListLeagues:
             platform_type=PlatformType.sleeper,
             platform_league_id="lg1",
             name="My League",
-            season=2025,
+            season=datetime.now().year,
             scoring_type=ScoringType.ppr,
         )
         db_session.add(league)
