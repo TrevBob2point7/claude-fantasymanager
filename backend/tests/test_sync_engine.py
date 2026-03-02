@@ -19,6 +19,7 @@ from app.models.player import Player
 from app.models.user import User
 from app.platforms.schemas import (
     PlatformLeague,
+    PlatformLeagueUser,
     PlatformMatchup,
     PlatformRosterEntry,
     PlatformTransaction,
@@ -75,8 +76,16 @@ def _mock_adapter():
     adapter.get_rosters.return_value = [
         PlatformRosterEntry(
             owner_id="sleeper123",
+            roster_id="1",
             player_ids=["p1", "p2"],
             starters=["p1"],
+        )
+    ]
+    adapter.get_league_users.return_value = [
+        PlatformLeagueUser(
+            user_id="sleeper123",
+            display_name="Test User",
+            team_name="Test Team",
         )
     ]
     adapter.get_players_map.return_value = {}
@@ -103,11 +112,6 @@ class TestSyncLeagues:
         result = await db_session.execute(select(League))
         db_leagues = result.scalars().all()
         assert len(db_leagues) == 1
-
-        # Verify user_league created
-        result = await db_session.execute(select(UserLeague))
-        user_leagues = result.scalars().all()
-        assert len(user_leagues) == 1
 
     async def test_sync_leagues_creates_sync_log(self, db_session: AsyncSession):
         user = await _create_test_user(db_session)
@@ -155,42 +159,92 @@ class TestSyncLeagues:
         assert "API down" in logs[0].error_message
 
 
+class TestSyncUserLeagues:
+    async def test_sync_user_leagues_creates_all_teams(self, db_session: AsyncSession):
+        """_sync_user_leagues creates entries for ALL teams, not just the current user."""
+        user = await _create_test_user(db_session)
+
+        league = League(
+            platform_type=PlatformType.sleeper,
+            platform_league_id="lg1",
+            name="Test",
+            season=2025,
+        )
+        db_session.add(league)
+        await db_session.flush()
+
+        mock_adapter = _mock_adapter()
+        mock_adapter.get_rosters.return_value = [
+            PlatformRosterEntry(owner_id="sleeper123", roster_id="1", player_ids=["p1"]),
+            PlatformRosterEntry(owner_id="other_owner1", roster_id="2", player_ids=["p2"]),
+            PlatformRosterEntry(owner_id="other_owner2", roster_id="3", player_ids=["p3"]),
+        ]
+        mock_adapter.get_league_users.return_value = [
+            PlatformLeagueUser(user_id="sleeper123", display_name="Me", team_name="My Team"),
+            PlatformLeagueUser(user_id="other_owner1", display_name="Bob", team_name="Bob's Team"),
+            PlatformLeagueUser(user_id="other_owner2", display_name="Alice", team_name=None),
+        ]
+
+        with patch("app.sync.engine.get_adapter", return_value=mock_adapter):
+            engine = SyncEngine(db_session)
+            await engine._sync_user_leagues(league, user.id, "sleeper123")
+
+        result = await db_session.execute(
+            select(UserLeague).where(UserLeague.league_id == league.id)
+        )
+        user_leagues = result.scalars().all()
+        assert len(user_leagues) == 3
+
+        # Current user's team has user_id set
+        my_ul = next(ul for ul in user_leagues if ul.platform_team_id == "1")
+        assert my_ul.user_id == user.id
+        assert my_ul.team_name == "My Team"
+
+        # Other teams have user_id=None
+        bob_ul = next(ul for ul in user_leagues if ul.platform_team_id == "2")
+        assert bob_ul.user_id is None
+        assert bob_ul.team_name == "Bob's Team"
+
+        alice_ul = next(ul for ul in user_leagues if ul.platform_team_id == "3")
+        assert alice_ul.user_id is None
+        # Falls back to display_name when team_name is None
+        assert alice_ul.team_name == "Alice"
+
+
 class TestSyncMatchups:
     async def test_sync_matchups_creates_matchups(self, db_session: AsyncSession):
         user = await _create_test_user(db_session)
         account = await _create_platform_account(db_session, user)
         mock_adapter = _mock_adapter()
 
-        # First sync leagues to create league + user_league
+        # First sync leagues to create league
         with patch("app.sync.engine.get_adapter", return_value=mock_adapter):
             engine = SyncEngine(db_session)
             leagues = await engine.sync_leagues(user.id, account, 2025)
 
         league = leagues[0]
 
-        # Set up user_leagues with platform_team_ids
-        result = await db_session.execute(
-            select(UserLeague).where(UserLeague.league_id == league.id)
+        # Create user_leagues with roster_id-based platform_team_ids
+        ul1 = UserLeague(
+            user_id=user.id,
+            league_id=league.id,
+            team_name="My Team",
+            platform_team_id="1",
         )
-        ul = result.scalar_one()
-        ul.platform_team_id = "sleeper123"
-        await db_session.flush()
-
-        # Create a second user_league for the opponent (different user)
-        opponent_user = await _create_test_user(db_session)
-        opponent_ul = UserLeague(
-            user_id=opponent_user.id,
+        ul2 = UserLeague(
+            user_id=None,
             league_id=league.id,
             team_name="Opponent",
-            platform_team_id="opponent1",
+            platform_team_id="2",
         )
-        db_session.add(opponent_ul)
+        db_session.add_all([ul1, ul2])
         await db_session.flush()
-        await db_session.refresh(opponent_ul)
+        await db_session.refresh(ul1)
+        await db_session.refresh(ul2)
 
         mock_adapter.get_matchups.return_value = [
-            PlatformMatchup(matchup_id=1, roster_id="sleeper123", points=120.5, week=1),
-            PlatformMatchup(matchup_id=1, roster_id="opponent1", points=115.3, week=1),
+            PlatformMatchup(matchup_id=1, roster_id="1", points=120.5, week=1),
+            PlatformMatchup(matchup_id=1, roster_id="2", points=115.3, week=1),
         ]
 
         with patch("app.sync.engine.get_adapter", return_value=mock_adapter):
@@ -200,9 +254,9 @@ class TestSyncMatchups:
         result = await db_session.execute(select(Matchup))
         matchups = result.scalars().all()
         assert len(matchups) == 1
-        # Home/away assigned by sorted roster_id: "opponent1" < "sleeper123"
-        assert float(matchups[0].home_score) == 115.3
-        assert float(matchups[0].away_score) == 120.5
+        # Home/away assigned by sorted roster_id: "1" < "2"
+        assert float(matchups[0].home_score) == 120.5
+        assert float(matchups[0].away_score) == 115.3
 
 
 class TestSyncStandings:
@@ -218,9 +272,14 @@ class TestSyncStandings:
         db_session.add(league)
         await db_session.flush()
 
-        user2 = await _create_test_user(db_session)
-        ul1 = UserLeague(user_id=user.id, league_id=league.id, team_name="Team A")
-        ul2 = UserLeague(user_id=user2.id, league_id=league.id, team_name="Team B")
+        ul1 = UserLeague(
+            user_id=user.id, league_id=league.id,
+            team_name="Team A", platform_team_id="1",
+        )
+        ul2 = UserLeague(
+            user_id=None, league_id=league.id,
+            team_name="Team B", platform_team_id="2",
+        )
         db_session.add_all([ul1, ul2])
         await db_session.flush()
         await db_session.refresh(ul1)
@@ -264,19 +323,20 @@ class TestSyncTransactions:
         account = await _create_platform_account(db_session, user)
         mock_adapter = _mock_adapter()
 
-        # Sync leagues to create league + user_league
+        # Sync leagues to create league
         with patch("app.sync.engine.get_adapter", return_value=mock_adapter):
             engine = SyncEngine(db_session)
             leagues = await engine.sync_leagues(user.id, account, 2025)
 
         league = leagues[0]
 
-        # Set up user_league with platform_team_id
-        result = await db_session.execute(
-            select(UserLeague).where(UserLeague.league_id == league.id)
+        # Set up user_league with platform_team_id (roster_id)
+        ul = UserLeague(
+            user_id=user.id,
+            league_id=league.id,
+            platform_team_id="1",
         )
-        ul = result.scalar_one()
-        ul.platform_team_id = "sleeper123"
+        db_session.add(ul)
         await db_session.flush()
 
         mock_adapter.get_transactions.return_value = [
@@ -284,14 +344,14 @@ class TestSyncTransactions:
                 type="add",
                 player_ids_added=["p1"],
                 player_ids_dropped=[],
-                roster_ids=["sleeper123"],
+                roster_ids=["1"],
                 timestamp=1700000000000,
             ),
             PlatformTransaction(
                 type="add",
                 player_ids_added=["p2"],
                 player_ids_dropped=["p3"],
-                roster_ids=["sleeper123"],
+                roster_ids=["1"],
                 timestamp=1700000001000,
             ),
         ]
@@ -374,7 +434,7 @@ class TestSyncRostersSlotInference:
             user_id=user.id,
             league_id=league.id,
             team_name="Slot Team",
-            platform_team_id="sleeper123",
+            platform_team_id="1",
         )
         db_session.add(ul)
         await db_session.flush()
@@ -383,6 +443,7 @@ class TestSyncRostersSlotInference:
         mock_adapter.get_rosters.return_value = [
             PlatformRosterEntry(
                 owner_id="sleeper123",
+                roster_id="1",
                 player_ids=["p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9"],
                 starters=["p1", "p2", "p3", "p4", "p5", "p6", "p7"],
             )
@@ -436,7 +497,7 @@ class TestSyncRostersSlotInference:
             user_id=user.id,
             league_id=league.id,
             team_name="No Pos Team",
-            platform_team_id="sleeper123",
+            platform_team_id="1",
         )
         db_session.add(ul)
         await db_session.flush()
@@ -445,6 +506,7 @@ class TestSyncRostersSlotInference:
         mock_adapter.get_rosters.return_value = [
             PlatformRosterEntry(
                 owner_id="sleeper123",
+                roster_id="1",
                 player_ids=["p1", "p2"],
                 starters=["p1"],
             )
@@ -493,7 +555,7 @@ class TestSyncRostersSlotInference:
             user_id=user.id,
             league_id=league.id,
             team_name="Mismatch Team",
-            platform_team_id="sleeper123",
+            platform_team_id="1",
         )
         db_session.add(ul)
         await db_session.flush()
@@ -503,6 +565,7 @@ class TestSyncRostersSlotInference:
         mock_adapter.get_rosters.return_value = [
             PlatformRosterEntry(
                 owner_id="sleeper123",
+                roster_id="1",
                 player_ids=["p1", "p2", "p3", "p4", "p5"],
                 starters=["p1", "p2", "p3"],
             )

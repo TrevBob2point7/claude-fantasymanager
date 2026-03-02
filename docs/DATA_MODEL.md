@@ -142,19 +142,19 @@ League metadata synced from platforms.
 
 ### `user_leagues`
 
-Junction table: which users are in which leagues. Also stores the user's team identity within that league.
+All teams in a league. Each roster in the platform gets a row. The app user's own team has `user_id` set; opponent teams have `user_id = NULL`.
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
 | `id` | UUID | NO | `gen_random_uuid()` | PK |
-| `user_id` | UUID | NO | — | FK → `users.id` |
+| `user_id` | UUID | YES | — | FK → `users.id`. NULL for opponent teams. |
 | `league_id` | UUID | NO | — | FK → `leagues.id` |
-| `team_name` | VARCHAR(200) | YES | — | User's team name in this league |
-| `platform_team_id` | VARCHAR(100) | YES | — | Platform's roster/team ID |
+| `team_name` | VARCHAR(200) | YES | — | Team name (from platform or display name) |
+| `platform_team_id` | VARCHAR(100) | NO | — | Platform's roster/team ID (e.g. Sleeper `roster_id`) |
 | `created_at` | TIMESTAMPTZ | NO | `now()` | |
 | `updated_at` | TIMESTAMPTZ | NO | `now()` | Auto-updated |
 
-**Unique constraint:** `(user_id, league_id)`
+**Unique constraint:** `(league_id, platform_team_id)`
 **Relationships:** `user`, `league`, `rosters`, `standings`
 
 ---
@@ -343,7 +343,7 @@ All primary keys have implicit indexes. Additional indexes:
 | `players` | `players_espn_id_key` | `espn_id` | UNIQUE |
 | `leagues` | `leagues_platform_type_platform_league_id_season_key` | `(platform_type, platform_league_id, season)` | UNIQUE |
 | `platform_accounts` | `platform_accounts_user_id_platform_type_key` | `(user_id, platform_type)` | UNIQUE |
-| `user_leagues` | `user_leagues_user_id_league_id_key` | `(user_id, league_id)` | UNIQUE |
+| `user_leagues` | `user_leagues_league_id_platform_team_id_key` | `(league_id, platform_team_id)` | UNIQUE |
 | `rosters` | `rosters_user_league_id_player_id_key` | `(user_league_id, player_id)` | UNIQUE |
 | `standings` | `standings_league_id_user_league_id_key` | `(league_id, user_league_id)` | UNIQUE |
 | `player_scores` | `player_scores_player_id_league_id_week_season_key` | `(player_id, league_id, week, season)` | UNIQUE |

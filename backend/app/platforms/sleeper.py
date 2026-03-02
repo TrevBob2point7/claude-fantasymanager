@@ -3,6 +3,7 @@ import httpx
 from app.platforms.base import PlatformAdapter
 from app.platforms.schemas import (
     PlatformLeague,
+    PlatformLeagueUser,
     PlatformMatchup,
     PlatformRosterEntry,
     PlatformTransaction,
@@ -93,11 +94,28 @@ class SleeperAdapter(PlatformAdapter):
             return [
                 PlatformRosterEntry(
                     owner_id=str(r.get("owner_id", r.get("roster_id", ""))),
+                    roster_id=str(r.get("roster_id", "")),
                     player_ids=[str(p) for p in (r.get("players") or [])],
                     starters=[str(p) for p in (r.get("starters") or [])],
                     taxi=[str(p) for p in (r.get("taxi") or [])],
                 )
                 for r in data
+            ]
+
+    async def get_league_users(self, league_id: str) -> list[PlatformLeagueUser]:
+        async with httpx.AsyncClient(base_url=BASE_URL, timeout=_CLIENT_TIMEOUT) as client:
+            resp = await client.get(f"/league/{league_id}/users")
+            resp.raise_for_status()
+            data = resp.json()
+            if not data:
+                return []
+            return [
+                PlatformLeagueUser(
+                    user_id=str(u["user_id"]),
+                    display_name=u.get("display_name"),
+                    team_name=(u.get("metadata") or {}).get("team_name"),
+                )
+                for u in data
             ]
 
     async def get_matchups(self, league_id: str, week: int) -> list[PlatformMatchup]:

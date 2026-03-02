@@ -77,7 +77,7 @@ class SyncEngine:
     async def sync_leagues(
         self, user_id: UUID, platform_account: PlatformAccount, season: int
     ) -> list[League]:
-        """Discover and upsert leagues + user_leagues for a platform account."""
+        """Discover and upsert leagues for a platform account."""
         log = await self._log_start(user_id, platform_account.platform_type, DataType.leagues)
         try:
             adapter = get_adapter(platform_account.platform_type)
@@ -135,20 +135,67 @@ class SyncEngine:
                 league = result.scalar_one()
                 leagues.append(league)
 
-                # Upsert user_league
-                stmt = (
-                    pg_insert(UserLeague)
-                    .values(user_id=user_id, league_id=league.id)
-                    .on_conflict_do_nothing(index_elements=["user_id", "league_id"])
-                )
-                await self.db.execute(stmt)
-
             await self.db.flush()
             await self._log_complete(log)
             return leagues
         except Exception as e:
             await self._log_error(log, str(e))
             raise
+
+    async def _sync_user_leagues(
+        self,
+        league: League,
+        user_id: UUID | None,
+        platform_user_id: str | None,
+    ) -> None:
+        """Create user_league entries for ALL teams in a league.
+
+        Fetches rosters and league users from the platform, then upserts a
+        user_league row per roster using roster_id as platform_team_id.
+        Only the roster owned by the current app user gets user_id set;
+        all other teams get user_id=NULL.
+        """
+        adapter = get_adapter(league.platform_type)
+        platform_rosters = await adapter.get_rosters(league.platform_league_id)
+        league_users = await adapter.get_league_users(league.platform_league_id)
+
+        # Build owner_id -> league user info lookup
+        user_info_by_owner = {lu.user_id: lu for lu in league_users}
+
+        for pr in platform_rosters:
+            # Determine if this roster belongs to the current app user
+            is_current_user = (
+                platform_user_id
+                and pr.owner_id == platform_user_id
+                and user_id is not None
+            )
+            row_user_id = user_id if is_current_user else None
+
+            # Get team name from league users data
+            lu = user_info_by_owner.get(pr.owner_id)
+            team_name = None
+            if lu:
+                team_name = lu.team_name or lu.display_name
+
+            stmt = (
+                pg_insert(UserLeague)
+                .values(
+                    user_id=row_user_id,
+                    league_id=league.id,
+                    platform_team_id=pr.roster_id,
+                    team_name=team_name,
+                )
+                .on_conflict_do_update(
+                    index_elements=["league_id", "platform_team_id"],
+                    set_={
+                        "user_id": row_user_id,
+                        "team_name": team_name,
+                    },
+                )
+            )
+            await self.db.execute(stmt)
+
+        await self.db.flush()
 
     async def sync_rosters(
         self,
@@ -182,7 +229,7 @@ class SyncEngine:
             # Collect user_league IDs that will be refreshed
             ul_ids_to_refresh = []
             for pr in platform_rosters:
-                ul = ul_by_platform_id.get(pr.owner_id)
+                ul = ul_by_platform_id.get(pr.roster_id)
                 if ul is not None:
                     ul_ids_to_refresh.append(ul.id)
 
@@ -201,9 +248,8 @@ class SyncEngine:
             starter_slots = [pos for pos in roster_positions if pos not in ("BN", "IR")]
 
             for pr in platform_rosters:
-                ul = ul_by_platform_id.get(pr.owner_id)
+                ul = ul_by_platform_id.get(pr.roster_id)
                 if ul is None:
-                    # Try to match or create a user_league for this roster owner
                     continue
 
                 # Build starter → slot mapping using position order
@@ -509,8 +555,9 @@ class SyncEngine:
         league: League,
         user_id: UUID,
         platform_account: PlatformAccount,
+        players_map: dict[str, dict] | None = None,
     ) -> None:
-        """Walk the previous_league_id chain to sync historical seasons."""
+        """Walk the previous_league_id chain to sync historical seasons with full data."""
         prev_league_id = league.previous_league_id
         adapter = get_adapter(platform_account.platform_type)
 
@@ -567,13 +614,51 @@ class SyncEngine:
             result = await self.db.execute(stmt)
             db_league = result.scalar_one()
 
-            # Create user_league entry
-            stmt = (
-                pg_insert(UserLeague)
-                .values(user_id=user_id, league_id=db_league.id)
-                .on_conflict_do_nothing(index_elements=["user_id", "league_id"])
+            # Sync all teams for the historical league
+            await self._sync_user_leagues(
+                db_league,
+                user_id,
+                platform_account.platform_user_id,
             )
-            await self.db.execute(stmt)
+
+            # Sync rosters
+            try:
+                await self.sync_rosters(db_league, user_id, players_map=players_map)
+            except Exception:
+                logger.exception(
+                    "Failed to sync rosters for historical league %s", past_league.league_id
+                )
+
+            # Sync matchups and transactions for all weeks
+            current_week = settings_json.get("leg", 17) if settings_json else 17
+            for week in range(1, min(current_week + 1, 19)):
+                try:
+                    await self.sync_matchups(db_league, user_id, week)
+                except Exception:
+                    logger.exception(
+                        "Failed to sync matchups week %d for historical league %s",
+                        week,
+                        past_league.league_id,
+                    )
+                try:
+                    await self.sync_transactions(
+                        db_league, user_id, week, players_map=players_map
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to sync transactions week %d for historical league %s",
+                        week,
+                        past_league.league_id,
+                    )
+
+            # Sync standings
+            try:
+                await self.sync_standings(db_league, user_id)
+            except Exception:
+                logger.exception(
+                    "Failed to sync standings for historical league %s", past_league.league_id
+                )
+
             await self.db.flush()
 
             logger.info(
@@ -609,54 +694,16 @@ class SyncEngine:
         except Exception:
             logger.warning("Could not fetch players map, will use stubs")
 
-        # 3. For each league, sync rosters, matchups (recent weeks), standings, transactions
+        # 3. For each league, sync user_leagues, rosters, matchups, standings, transactions
         for league in leagues:
-            # Update user_league platform_team_id from roster data
+            # Sync all teams (user_leagues) for this league
             try:
-                adapter = get_adapter(platform_account.platform_type)
-                platform_rosters = await adapter.get_rosters(league.platform_league_id)
-
-                # Get sleeper league users to map roster_id -> owner_id
-                result = await self.db.execute(
-                    select(UserLeague).where(
-                        UserLeague.league_id == league.id,
-                        UserLeague.user_id == user_id,
-                    )
+                await self._sync_user_leagues(
+                    league, user_id, platform_account.platform_user_id
                 )
-                user_league = result.scalar_one_or_none()
-                if user_league and platform_account.platform_user_id:
-                    # Find the roster that belongs to this user
-                    for pr in platform_rosters:
-                        if pr.owner_id == platform_account.platform_user_id:
-                            user_league.platform_team_id = pr.owner_id
-                            break
-                    # Also set platform_team_id for other rosters via roster owner mapping
-                    for pr in platform_rosters:
-                        existing = await self.db.execute(
-                            select(UserLeague).where(
-                                UserLeague.league_id == league.id,
-                                UserLeague.platform_team_id == pr.owner_id,
-                            )
-                        )
-                        if existing.scalar_one_or_none() is None:
-                            # Create user_league stubs for other teams
-                            stmt = (
-                                pg_insert(UserLeague)
-                                .values(
-                                    user_id=user_id,
-                                    league_id=league.id,
-                                    platform_team_id=pr.owner_id,
-                                )
-                                .on_conflict_do_update(
-                                    index_elements=["user_id", "league_id"],
-                                    set_={"platform_team_id": pr.owner_id},
-                                )
-                            )
-                            await self.db.execute(stmt)
-                    await self.db.flush()
             except Exception as e:
-                logger.exception("Failed to map roster owners for league %s", league.id)
-                errors.append(f"roster_mapping({league.name}): {e}")
+                logger.exception("Failed to sync user_leagues for league %s", league.id)
+                errors.append(f"user_leagues({league.name}): {e}")
 
             try:
                 await self.sync_rosters(league, user_id, players_map=players_map)
@@ -698,7 +745,9 @@ class SyncEngine:
         for league in leagues:
             if league.previous_league_id:
                 try:
-                    await self.sync_historical_seasons(league, user_id, platform_account)
+                    await self.sync_historical_seasons(
+                        league, user_id, platform_account, players_map=players_map
+                    )
                     if "historical_seasons" not in synced:
                         synced.append("historical_seasons")
                 except Exception as e:

@@ -112,6 +112,7 @@ class TestListLeagues:
             user_id=user.id,
             league_id=league.id,
             team_name="My Team",
+            platform_team_id="1",
         )
         db_session.add(ul)
         await db_session.commit()
@@ -138,7 +139,10 @@ class TestListLeagues:
             db_session.add(league)
             await db_session.flush()
             await db_session.refresh(league)
-            ul = UserLeague(user_id=user.id, league_id=league.id)
+            ul = UserLeague(
+                user_id=user.id, league_id=league.id,
+                platform_team_id=f"1_{season}",
+            )
             db_session.add(ul)
 
         await db_session.commit()
@@ -182,6 +186,7 @@ class TestGetLeagueDetail:
             user_id=user.id,
             league_id=league.id,
             team_name="My Team",
+            platform_team_id="1",
         )
         db_session.add(ul)
         await db_session.commit()
@@ -229,6 +234,7 @@ class TestGetLeagueDetail:
             user_id=user.id,
             league_id=league.id,
             team_name="My Team",
+            platform_team_id="1",
         )
         db_session.add(ul)
         await db_session.flush()
@@ -282,6 +288,7 @@ class TestGetLeagueDetail:
             user_id=user.id,
             league_id=league.id,
             team_name="My Team",
+            platform_team_id="1",
         )
         db_session.add(ul)
         await db_session.flush()
@@ -341,6 +348,7 @@ class TestGetLeagueDetail:
             user_id=user.id,
             league_id=league.id,
             team_name="My Team",
+            platform_team_id="1",
         )
         db_session.add(ul)
         await db_session.commit()
@@ -375,6 +383,7 @@ class TestGetLeagueDetail:
             user_id=user.id,
             league_id=league.id,
             team_name="My Team",
+            platform_team_id="1",
         )
         db_session.add(ul)
         await db_session.flush()
@@ -453,8 +462,11 @@ class TestGetLeagueSeasons:
         await db_session.refresh(league_2025)
 
         # Link user to all leagues
-        for lg in [league_2023, league_2024, league_2025]:
-            ul = UserLeague(user_id=user.id, league_id=lg.id)
+        for i, lg in enumerate([league_2023, league_2024, league_2025], start=1):
+            ul = UserLeague(
+                user_id=user.id, league_id=lg.id,
+                platform_team_id=str(i),
+            )
             db_session.add(ul)
         await db_session.commit()
 
@@ -493,7 +505,10 @@ class TestGetLeagueSeasons:
         await db_session.flush()
         await db_session.refresh(league)
 
-        ul = UserLeague(user_id=user.id, league_id=league.id)
+        ul = UserLeague(
+            user_id=user.id, league_id=league.id,
+            platform_team_id="1",
+        )
         db_session.add(ul)
         await db_session.commit()
 
@@ -542,8 +557,11 @@ class TestListLeaguesCurrentSeason:
         await db_session.flush()
         await db_session.refresh(current_league)
 
-        for lg in [old_league, current_league]:
-            ul = UserLeague(user_id=user.id, league_id=lg.id)
+        for i, lg in enumerate([old_league, current_league], start=1):
+            ul = UserLeague(
+                user_id=user.id, league_id=lg.id,
+                platform_team_id=str(i),
+            )
             db_session.add(ul)
         await db_session.commit()
 
