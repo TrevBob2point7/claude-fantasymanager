@@ -1,6 +1,6 @@
 """add league_group_id to leagues
 
-Revision ID: a1b2c3d4e5f6
+Revision ID: 01cbebd14999
 Revises: f7a8b9c0d1e2
 Create Date: 2026-03-08 12:00:00.000000
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "a1b2c3d4e5f6"
+revision: str = "01cbebd14999"
 down_revision: str | None = "f7a8b9c0d1e2"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
