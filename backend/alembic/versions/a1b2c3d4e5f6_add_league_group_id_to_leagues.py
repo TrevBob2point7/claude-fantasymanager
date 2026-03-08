@@ -35,7 +35,7 @@ def upgrade() -> None:
     ).fetchall()
 
     # Track which leagues have been assigned a group
-    assigned: dict[str, str] = {}  # league.id -> group_id
+    assigned: dict = {}  # league.id -> group_id (uuid.UUID)
 
     for lg in leagues:
         if lg.id in assigned:
@@ -79,22 +79,24 @@ def upgrade() -> None:
                     changed = True
 
         # Assign a single group_id to all leagues in the chain
-        group_id = str(uuid.uuid4())
+        group_id = uuid.uuid4()
         for member in chain:
             assigned[member.id] = group_id
-            conn.execute(
-                sa.text("UPDATE leagues SET league_group_id = :gid WHERE id = :lid"),
-                {"gid": group_id, "lid": member.id},
-            )
 
     # Assign unique group_id to any unassigned leagues
     for lg in leagues:
         if lg.id not in assigned:
-            group_id = str(uuid.uuid4())
-            conn.execute(
-                sa.text("UPDATE leagues SET league_group_id = :gid WHERE id = :lid"),
-                {"gid": group_id, "lid": lg.id},
-            )
+            assigned[lg.id] = uuid.uuid4()
+
+    # Batch update all assignments
+    if assigned:
+        update_stmt = sa.text(
+            "UPDATE leagues SET league_group_id = :gid WHERE id = :lid"
+        )
+        conn.execute(
+            update_stmt,
+            [{"gid": gid, "lid": lid} for lid, gid in assigned.items()],
+        )
 
 
 def downgrade() -> None:
