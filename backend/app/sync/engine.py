@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from sqlalchemy import and_, or_, select
@@ -172,6 +172,25 @@ class SyncEngine:
                 result = await self.db.execute(stmt)
                 league = result.scalar_one()
                 leagues.append(league)
+
+            # Auto-assign league_group_id for new leagues
+            for league in leagues:
+                if league.league_group_id is None:
+                    # Check if any league in the chain already has a group_id
+                    if league.previous_league_id:
+                        result = await self.db.execute(
+                            select(League.league_group_id).where(
+                                League.platform_type == platform_account.platform_type,
+                                League.platform_league_id == league.previous_league_id,
+                                League.league_group_id.isnot(None),
+                            ).limit(1)
+                        )
+                        existing_group = result.scalar_one_or_none()
+                        if existing_group:
+                            league.league_group_id = existing_group
+                            continue
+                    # No existing group found — generate a new one
+                    league.league_group_id = uuid4()
 
             await self.db.flush()
             await self._log_complete(log)
@@ -796,6 +815,10 @@ class SyncEngine:
             )
             result = await self.db.execute(stmt)
             db_league = result.scalar_one()
+
+            # Propagate league_group_id from the parent league
+            if db_league.league_group_id is None:
+                db_league.league_group_id = league.league_group_id
 
             # Sync all teams for the historical league
             await self._sync_user_leagues(
