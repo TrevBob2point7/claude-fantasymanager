@@ -840,8 +840,8 @@ class SyncEngine:
             result = await self.db.execute(stmt)
             db_league = result.scalar_one()
 
-            # Propagate league_group_id from the parent league
-            if db_league.league_group_id is None:
+            # Ensure historical league shares the parent's group
+            if db_league.league_group_id != league.league_group_id:
                 db_league.league_group_id = league.league_group_id
 
             # Sync all teams for the historical league
