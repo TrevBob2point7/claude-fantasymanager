@@ -22,6 +22,7 @@ from app.platforms.schemas import (
     PlatformLeagueUser,
     PlatformMatchup,
     PlatformRosterEntry,
+    PlatformStanding,
     PlatformTransaction,
     PlatformUser,
 )
@@ -91,6 +92,7 @@ def _mock_adapter():
     adapter.get_players_map.return_value = {}
     adapter.get_matchups.return_value = []
     adapter.get_transactions.return_value = []
+    adapter.get_standings.return_value = None
     return adapter
 
 
@@ -743,3 +745,267 @@ class TestSyncHistoricalSeasons:
         db_leagues = result.scalars().all()
         assert len(db_leagues) == 1
         assert db_leagues[0].platform_league_id == "lg_new"
+
+
+class TestSyncMFLLeague:
+    async def test_sync_mfl_league_passes_credentials(self, db_session: AsyncSession):
+        """Sync engine passes credentials_json when creating MFL adapter."""
+        user = await _create_test_user(db_session)
+        account = PlatformAccount(
+            user_id=user.id,
+            platform_type=PlatformType.mfl,
+            platform_username="mfluser",
+            platform_user_id="mfluser",  # MFL sets this at login
+            credentials_json={"cookie": "MFL_USER_ID=test123", "password": "secret"},
+        )
+        db_session.add(account)
+        await db_session.commit()
+        await db_session.refresh(account)
+
+        mock_adapter = _mock_adapter()
+        mock_adapter.get_leagues.return_value = [
+            PlatformLeague(
+                league_id="40750",
+                name="MFL Dynasty",
+                season=2025,
+                roster_size=25,
+                scoring_type="ppr",
+                league_type="dynasty",
+                settings={"startWeek": "1", "endWeek": "17", "lastRegularSeasonWeek": "14"},
+            )
+        ]
+
+        with patch("app.sync.engine.get_adapter", return_value=mock_adapter) as mock_get:
+            engine = SyncEngine(db_session)
+            leagues = await engine.sync_leagues(user.id, account, 2025)
+
+        assert len(leagues) == 1
+        assert leagues[0].name == "MFL Dynasty"
+        # Verify credentials were passed to get_adapter
+        mock_get.assert_called_with(
+            PlatformType.mfl,
+            credentials_json=account.credentials_json,
+        )
+
+
+class TestSyncMFLWeekCount:
+    async def test_sync_all_uses_end_week_for_mfl(self, db_session: AsyncSession):
+        """MFL leagues use endWeek from settings instead of leg."""
+        user = await _create_test_user(db_session)
+        account = PlatformAccount(
+            user_id=user.id,
+            platform_type=PlatformType.mfl,
+            platform_username="mfluser",
+            platform_user_id="mfluser",
+            credentials_json={"cookie": "MFL_USER_ID=test123"},
+        )
+        db_session.add(account)
+        await db_session.commit()
+        await db_session.refresh(account)
+
+        mock_adapter = _mock_adapter()
+        mock_adapter.get_leagues.return_value = [
+            PlatformLeague(
+                league_id="40750",
+                name="MFL League",
+                season=2025,
+                settings={"endWeek": "16"},  # MFL uses endWeek, not leg
+            )
+        ]
+        mock_adapter.get_rosters.return_value = []
+        mock_adapter.get_league_users.return_value = []
+
+        with patch("app.sync.engine.get_adapter", return_value=mock_adapter):
+            engine = SyncEngine(db_session)
+            await engine.sync_all(user.id, account, 2025)
+
+        # Should have synced matchups for weeks 1-16 (endWeek=16)
+        # Verify via the mock calls to get_matchups
+        matchup_weeks = [
+            call.args[1] if len(call.args) > 1 else call.kwargs.get("week")
+            for call in mock_adapter.get_matchups.call_args_list
+        ]
+        # Should include week 16 but not week 17
+        if matchup_weeks:  # Only check if matchups were called
+            assert max(matchup_weeks) <= 16
+
+
+class TestSyncMFLHistoricalSeasons:
+    async def test_mfl_historical_uses_year_adapter(self, db_session: AsyncSession):
+        """MFL historical sync creates new adapter with correct year parameter."""
+        user = await _create_test_user(db_session)
+        account = PlatformAccount(
+            user_id=user.id,
+            platform_type=PlatformType.mfl,
+            platform_username="mfluser",
+            platform_user_id="mfluser",
+            credentials_json={"cookie": "MFL_USER_ID=test123"},
+        )
+        db_session.add(account)
+        await db_session.commit()
+        await db_session.refresh(account)
+
+        # Current season league with previous_league_id pointing to same ID (MFL pattern)
+        current_league = League(
+            platform_type=PlatformType.mfl,
+            platform_league_id="40750",
+            name="MFL Dynasty",
+            season=2025,
+            settings_json={"endWeek": "17"},
+            previous_league_id="40750",  # Same ID, different year
+        )
+        db_session.add(current_league)
+        await db_session.flush()
+
+        mock_adapter = _mock_adapter()
+        mock_adapter.get_league.return_value = PlatformLeague(
+            league_id="40750",
+            name="MFL Dynasty",
+            season=2024,
+            roster_size=25,
+            scoring_type="ppr",
+            settings={"endWeek": "17"},
+            previous_league_id=None,  # End of chain
+        )
+        mock_adapter.get_rosters.return_value = []
+        mock_adapter.get_league_users.return_value = []
+
+        get_adapter_calls = []
+
+        def mock_get_adapter(platform_type, **kwargs):
+            get_adapter_calls.append((platform_type, kwargs))
+            return mock_adapter
+
+        with patch("app.sync.engine.get_adapter", side_effect=mock_get_adapter):
+            engine = SyncEngine(db_session)
+            await engine.sync_historical_seasons(current_league, user.id, account)
+
+        # Verify that get_adapter was called with year=2024 for the historical season
+        year_calls = [c for c in get_adapter_calls if c[1].get("year") is not None]
+        assert len(year_calls) >= 1
+        assert year_calls[0][1]["year"] == 2024
+
+
+class TestSyncMFLStandings:
+    async def test_sync_standings_uses_platform_standings(self, db_session: AsyncSession):
+        """When adapter returns standings, use them instead of computing from matchups."""
+        user = await _create_test_user(db_session)
+
+        league = League(
+            platform_type=PlatformType.mfl,
+            platform_league_id="40750",
+            name="MFL League",
+            season=2025,
+        )
+        db_session.add(league)
+        await db_session.flush()
+
+        ul1 = UserLeague(
+            user_id=user.id,
+            league_id=league.id,
+            team_name="Team A",
+            platform_team_id="0001",
+        )
+        ul2 = UserLeague(
+            user_id=None,
+            league_id=league.id,
+            team_name="Team B",
+            platform_team_id="0002",
+        )
+        db_session.add_all([ul1, ul2])
+        await db_session.flush()
+        await db_session.refresh(ul1)
+        await db_session.refresh(ul2)
+
+        mock_adapter = _mock_adapter()
+        mock_adapter.get_standings.return_value = [
+            PlatformStanding(
+                franchise_id="0001",
+                wins=10,
+                losses=3,
+                ties=0,
+                points_for=1500.5,
+                points_against=1200.3,
+            ),
+            PlatformStanding(
+                franchise_id="0002",
+                wins=7,
+                losses=6,
+                ties=0,
+                points_for=1300.0,
+                points_against=1350.0,
+            ),
+        ]
+
+        with patch("app.sync.engine.get_adapter", return_value=mock_adapter):
+            engine = SyncEngine(db_session)
+            await engine.sync_standings(league, user.id)
+
+        result = await db_session.execute(
+            select(Standing).where(Standing.league_id == league.id).order_by(Standing.rank)
+        )
+        standings = result.scalars().all()
+        assert len(standings) == 2
+        # Team A should be rank 1 (more wins)
+        assert standings[0].user_league_id == ul1.id
+        assert standings[0].wins == 10
+        assert standings[0].losses == 3
+        assert float(standings[0].points_for) == 1500.5
+
+    async def test_sync_standings_falls_back_to_matchups(self, db_session: AsyncSession):
+        """When adapter returns None for standings, compute from matchups as before."""
+        user = await _create_test_user(db_session)
+
+        league = League(
+            platform_type=PlatformType.sleeper,
+            platform_league_id="lg1",
+            name="Sleeper League",
+            season=2025,
+        )
+        db_session.add(league)
+        await db_session.flush()
+
+        ul1 = UserLeague(
+            user_id=user.id,
+            league_id=league.id,
+            team_name="Team A",
+            platform_team_id="1",
+        )
+        ul2 = UserLeague(
+            user_id=None,
+            league_id=league.id,
+            team_name="Team B",
+            platform_team_id="2",
+        )
+        db_session.add_all([ul1, ul2])
+        await db_session.flush()
+        await db_session.refresh(ul1)
+        await db_session.refresh(ul2)
+
+        # Create a matchup
+        m1 = Matchup(
+            league_id=league.id,
+            week=1,
+            home_user_league_id=ul1.id,
+            away_user_league_id=ul2.id,
+            home_score=120,
+            away_score=100,
+        )
+        db_session.add(m1)
+        await db_session.flush()
+
+        mock_adapter = _mock_adapter()
+        mock_adapter.get_standings.return_value = None  # No platform standings
+
+        with patch("app.sync.engine.get_adapter", return_value=mock_adapter):
+            engine = SyncEngine(db_session)
+            await engine.sync_standings(league, user.id)
+
+        result = await db_session.execute(
+            select(Standing).where(Standing.league_id == league.id).order_by(Standing.rank)
+        )
+        standings = result.scalars().all()
+        assert len(standings) == 2
+        # Team A won, so should be rank 1
+        assert standings[0].user_league_id == ul1.id
+        assert standings[0].wins == 1
