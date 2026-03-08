@@ -44,7 +44,8 @@ class MFLAdapter(PlatformAdapter):
         **kwargs: object,
     ):
         self.year = year or _current_nfl_season()
-        self.cookie = credentials_json.get("cookie") if credentials_json else None
+        self._credentials = credentials_json or {}
+        self.cookie = self._credentials.get("cookie")
         self._last_request_time: float = 0.0
 
     async def _request(
@@ -110,11 +111,14 @@ class MFLAdapter(PlatformAdapter):
             await asyncio.sleep(1.0 - elapsed)
 
         url = f"{self.BASE_URL}/{self.year}/login"
-        params = {"USERNAME": username, "PASSWORD": "", "XML": "1"}
+        password = self._credentials.get("password", "")
 
         async with httpx.AsyncClient(timeout=_CLIENT_TIMEOUT) as client:
             self._last_request_time = time.monotonic()
-            resp = await client.post(url, params=params)
+            resp = await client.post(
+                url,
+                data={"USERNAME": username, "PASSWORD": password, "XML": "1"},
+            )
             resp.raise_for_status()
 
         # Response is XML: <status cookie_name="MFL_USER_ID" cookie_value="..."/>
