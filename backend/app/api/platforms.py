@@ -97,6 +97,14 @@ async def mfl_login(
         )
 
     root = ET.fromstring(resp.text)
+
+    # Failed login returns <error>message</error>
+    if root.tag == "error":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=root.text or "Invalid MFL credentials",
+        )
+
     status_el = root if root.tag == "status" else root.find("status")
     if status_el is None:
         raise HTTPException(
@@ -104,12 +112,12 @@ async def mfl_login(
             detail="Unexpected MFL response format",
         )
 
-    cookie_value = status_el.get("cookie_value", "")
-    if not cookie_value:
-        error_msg = status_el.get("error", "Invalid MFL credentials")
+    # Successful login returns <status MFL_USER_ID="...">OK</status>
+    mfl_user_id = status_el.get("MFL_USER_ID", "")
+    if not mfl_user_id:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=error_msg,
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="MFL login succeeded but no user ID returned",
         )
 
     account = PlatformAccount(
@@ -117,7 +125,10 @@ async def mfl_login(
         platform_type=PlatformType.mfl,
         platform_username=body.username,
         platform_user_id=body.username,
-        credentials_json={"cookie": f"MFL_USER_ID={cookie_value}"},
+        credentials_json={
+            "cookie": f"MFL_USER_ID={mfl_user_id}",
+            "password": body.password,
+        },
     )
     db.add(account)
     await db.commit()
