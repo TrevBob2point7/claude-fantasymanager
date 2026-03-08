@@ -13,7 +13,7 @@ Designed for personal use today, built to support multiple users (friends, leagu
 | Platform | Status | Notes |
 |----------|--------|-------|
 | **Sleeper** | Active (primary) | Free public read-only API. No auth needed for reads. |
-| **MFL** (MyFantasyLeague) | Active (in progress) | Cookie-based auth. Year-based API paths (`/2025/export`). |
+| **MFL** (MyFantasyLeague) | Active (adapter complete) | Cookie-based auth. Year-based API paths (`/2025/export`). |
 | ESPN | Future | — |
 | Yahoo | Future | — |
 | NFL | Future | — |

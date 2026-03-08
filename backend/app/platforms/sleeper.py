@@ -15,6 +15,9 @@ _CLIENT_TIMEOUT = 30.0
 
 
 class SleeperAdapter(PlatformAdapter):
+    def __init__(self, **kwargs: object) -> None:
+        pass
+
     async def get_players_map(self) -> dict[str, dict]:
         """Fetch all NFL players from Sleeper."""
         async with httpx.AsyncClient(base_url=BASE_URL, timeout=60.0) as client:
