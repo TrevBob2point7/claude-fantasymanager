@@ -672,6 +672,83 @@ class TestGetPlayersMap:
         assert players == {}
 
 
+class TestGetStandings:
+    async def test_get_standings(self):
+        adapter = MFLAdapter(year=YEAR)
+        mock_resp = {
+            "leagueStandings": {
+                "franchise": [
+                    {
+                        "id": "0001",
+                        "h2hw": "10",
+                        "h2hl": "3",
+                        "h2ht": "0",
+                        "pf": "1523.46",
+                        "pa": "1201.30",
+                    },
+                    {
+                        "id": "0002",
+                        "h2hw": "7",
+                        "h2hl": "6",
+                        "h2ht": "1",
+                        "pf": "1300.00",
+                        "pa": "1350.50",
+                    },
+                ]
+            }
+        }
+        async with respx.mock:
+            respx.get(_url("/export")).mock(return_value=httpx.Response(200, json=mock_resp))
+            standings = await adapter.get_standings("40750")
+
+        assert standings is not None
+        assert len(standings) == 2
+        assert standings[0].franchise_id == "0001"
+        assert standings[0].wins == 10
+        assert standings[0].losses == 3
+        assert standings[0].ties == 0
+        assert standings[0].points_for == 1523.46
+        assert standings[0].points_against == 1201.30
+        assert standings[1].franchise_id == "0002"
+        assert standings[1].wins == 7
+        assert standings[1].ties == 1
+
+    async def test_get_standings_empty(self):
+        adapter = MFLAdapter(year=YEAR)
+        async with respx.mock:
+            respx.get(_url("/export")).mock(
+                return_value=httpx.Response(200, json={"leagueStandings": {}})
+            )
+            standings = await adapter.get_standings("40750")
+
+        assert standings is None
+
+    async def test_get_standings_single_franchise(self):
+        """MFL returns a dict instead of a list for a single franchise."""
+        adapter = MFLAdapter(year=YEAR)
+        mock_resp = {
+            "leagueStandings": {
+                "franchise": {
+                    "id": "0001",
+                    "h2hw": "5",
+                    "h2hl": "2",
+                    "h2ht": "0",
+                    "pf": "900.00",
+                    "pa": "850.00",
+                }
+            }
+        }
+        async with respx.mock:
+            respx.get(_url("/export")).mock(return_value=httpx.Response(200, json=mock_resp))
+            standings = await adapter.get_standings("40750")
+
+        assert standings is not None
+        assert len(standings) == 1
+        assert standings[0].franchise_id == "0001"
+        assert standings[0].wins == 5
+        assert standings[0].losses == 2
+
+
 class TestTransactionParsing:
     """Test static helper methods for transaction string parsing."""
 
