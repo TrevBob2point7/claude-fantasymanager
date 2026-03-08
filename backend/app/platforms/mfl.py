@@ -77,7 +77,7 @@ class MFLAdapter(PlatformAdapter):
         if use_auth and self.cookie:
             headers["Cookie"] = self.cookie
 
-        async with httpx.AsyncClient(timeout=_CLIENT_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=_CLIENT_TIMEOUT, follow_redirects=True) as client:
             self._last_request_time = time.monotonic()
             resp = await client.request(method, url, params=params, headers=headers)
             resp.raise_for_status()
@@ -119,7 +119,7 @@ class MFLAdapter(PlatformAdapter):
         url = f"{self.BASE_URL}/{self.year}/login"
         password = self._credentials.get("password", "")
 
-        async with httpx.AsyncClient(timeout=_CLIENT_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=_CLIENT_TIMEOUT, follow_redirects=True) as client:
             self._last_request_time = time.monotonic()
             resp = await client.post(
                 url,
