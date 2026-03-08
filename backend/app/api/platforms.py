@@ -116,6 +116,7 @@ async def mfl_login(
         user_id=current_user.id,
         platform_type=PlatformType.mfl,
         platform_username=body.username,
+        platform_user_id=body.username,
         credentials_json={"cookie": f"MFL_USER_ID={cookie_value}"},
     )
     db.add(account)

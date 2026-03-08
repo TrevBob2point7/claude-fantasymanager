@@ -159,6 +159,7 @@ class TestMFLLogin:
         data = response.json()
         assert data["platform_type"] == "mfl"
         assert data["platform_username"] == "mfl_user"
+        assert data["platform_user_id"] == "mfl_user"
         assert "id" in data
 
     async def test_mfl_login_invalid_credentials(self, authenticated_client: AsyncClient):
