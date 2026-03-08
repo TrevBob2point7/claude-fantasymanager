@@ -826,9 +826,9 @@ class TestSyncMFLWeekCount:
             call.args[1] if len(call.args) > 1 else call.kwargs.get("week")
             for call in mock_adapter.get_matchups.call_args_list
         ]
-        # Should include week 16 but not week 17
-        if matchup_weeks:  # Only check if matchups were called
-            assert max(matchup_weeks) <= 16
+        # Should have synced exactly weeks 1-16
+        assert len(matchup_weeks) == 16
+        assert max(matchup_weeks) == 16
 
 
 class TestSyncMFLHistoricalSeasons:
