@@ -34,6 +34,20 @@ def upgrade() -> None:
         )
     ).fetchall()
 
+    # Build lookup maps for O(n) chain walking
+    # (platform_type, platform_league_id) -> row (for backward walks)
+    by_platform_id: dict[tuple, list] = {}
+    # (platform_type, previous_league_id) -> [rows] (for forward walks)
+    by_prev_id: dict[tuple, list] = {}
+    for lg in leagues:
+        by_platform_id.setdefault(
+            (lg.platform_type, lg.platform_league_id), []
+        ).append(lg)
+        if lg.previous_league_id:
+            by_prev_id.setdefault(
+                (lg.platform_type, lg.previous_league_id), []
+            ).append(lg)
+
     # Track which leagues have been assigned a group
     assigned: dict = {}  # league.id -> group_id (uuid.UUID)
 
@@ -41,42 +55,37 @@ def upgrade() -> None:
         if lg.id in assigned:
             continue
 
-        # Walk the chain forward and backward to find all members
         chain = [lg]
 
         # Walk backward via previous_league_id
         current = lg
         while current.previous_league_id:
-            # Find the previous league
-            prev = None
-            for candidate in leagues:
-                if (
-                    candidate.platform_type == current.platform_type
-                    and candidate.platform_league_id == current.previous_league_id
-                    and candidate.season < current.season
-                ):
-                    prev = candidate
-                    break
+            candidates = by_platform_id.get(
+                (current.platform_type, current.previous_league_id), []
+            )
+            prev = next(
+                (c for c in candidates if c.season < current.season),
+                None,
+            )
             if prev is None or prev.id in assigned:
                 break
             chain.append(prev)
             current = prev
 
-        # Walk forward: find leagues whose previous_league_id points to any league in chain
-        changed = True
-        while changed:
-            changed = False
-            chain_ids = {c.platform_league_id for c in chain}
-            for candidate in leagues:
-                if candidate.id in assigned or candidate in chain:
-                    continue
-                if (
-                    candidate.platform_type == chain[0].platform_type
-                    and candidate.previous_league_id in chain_ids
-                    and candidate not in chain
-                ):
-                    chain.append(candidate)
-                    changed = True
+        # Walk forward: find leagues whose previous_league_id
+        # points to any league in the chain
+        queue = list(chain)
+        seen = {lg.id for lg in chain}
+        while queue:
+            current = queue.pop()
+            children = by_prev_id.get(
+                (current.platform_type, current.platform_league_id), []
+            )
+            for child in children:
+                if child.id not in seen and child.id not in assigned:
+                    chain.append(child)
+                    seen.add(child.id)
+                    queue.append(child)
 
         # Assign a single group_id to all leagues in the chain
         group_id = uuid.uuid4()
