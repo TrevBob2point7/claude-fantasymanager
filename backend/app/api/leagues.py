@@ -361,7 +361,13 @@ async def link_leagues(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Link two leagues into the same league group."""
+    """Link two leagues into the same league group.
+
+    Note: league_group_id lives on the shared League row, so linking
+    affects all users who belong to either league.  This is intentional —
+    grouping reflects a factual "same league" relationship, not a
+    per-user preference.  Re-evaluate if user-scoped grouping is needed.
+    """
     # Verify both leagues belong to the requesting user
     result = await db.execute(
         select(League)
