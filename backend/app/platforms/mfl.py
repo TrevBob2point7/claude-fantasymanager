@@ -166,6 +166,7 @@ class MFLAdapter(PlatformAdapter):
                     league_id=str(lg.get("league_id", "")),
                     name=lg.get("name", "Unnamed League"),
                     season=season,
+                    user_franchise_id=str(lg.get("franchise_id", "")) or None,
                 )
             )
         return results

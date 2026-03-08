@@ -140,10 +140,12 @@ class SyncEngine:
             platform_leagues = await adapter.get_leagues(platform_user_id, season)
             leagues = []
             for pl in platform_leagues:
-                # Merge roster_positions into settings_json
+                # Merge roster_positions and user_franchise_id into settings_json
                 settings_json = {**(pl.settings or {})}
                 if pl.roster_positions is not None:
                     settings_json["roster_positions"] = pl.roster_positions
+                if pl.user_franchise_id:
+                    settings_json["user_franchise_id"] = pl.user_franchise_id
 
                 # Upsert league
                 stmt = (
@@ -247,10 +249,16 @@ class SyncEngine:
         # Build owner_id -> league user info lookup
         user_info_by_owner = {lu.user_id: lu for lu in league_users}
 
+        # For MFL, match via franchise_id stored in settings_json
+        effective_user_id = platform_user_id
+        if league.platform_type == PlatformType.mfl:
+            settings = league.settings_json or {}
+            effective_user_id = settings.get("user_franchise_id") or platform_user_id
+
         for pr in platform_rosters:
             # Determine if this roster belongs to the current app user
             is_current_user = (
-                platform_user_id and pr.owner_id == platform_user_id and user_id is not None
+                effective_user_id and pr.owner_id == effective_user_id and user_id is not None
             )
             row_user_id = user_id if is_current_user else None
 
