@@ -99,7 +99,7 @@ class TransactionRead(BaseModel):
 class LeagueSeasonRead(BaseModel):
     season: int
     league_id: UUID
-    platform_type: PlatformType | None = None
+    platform_type: PlatformType
 
 
 class LeagueSeasonsResponse(BaseModel):
