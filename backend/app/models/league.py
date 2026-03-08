@@ -43,6 +43,9 @@ class League(Base):
     previous_league_id: Mapped[str | None] = mapped_column(
         sa.String(100), nullable=True
     )
+    league_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
     )
