@@ -121,6 +121,7 @@ export interface LeagueDetail extends League {
 export interface LeagueSeason {
   season: number;
   league_id: string;
+  platform_type: string;
 }
 
 export interface SyncResult {

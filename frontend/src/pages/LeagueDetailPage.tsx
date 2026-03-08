@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { getLeagueDetail, getLeagueSeasons } from "../api/leagues";
+import { getLeagueDetail, getLeagueSeasons, linkLeagues, unlinkLeagues } from "../api/leagues";
 import { getRosterADP } from "../api/adp";
 import { getCurrentNflSeason } from "../api/season";
 import type {
@@ -42,6 +42,11 @@ export default function LeagueDetailPage() {
   const [adpFormat, setAdpFormat] = useState<string | null>(null);
   const [adpMap, setAdpMap] = useState<Record<string, string | null>>({});
   const [seasons, setSeasons] = useState<LeagueSeason[]>([]);
+  const [linkModalOpen, setLinkModalOpen] = useState(false);
+  const [unlinkModalOpen, setUnlinkModalOpen] = useState(false);
+  const [linkTargetId, setLinkTargetId] = useState("");
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const [linkLoading, setLinkLoading] = useState(false);
 
   // Fetch league detail when leagueId changes
   useEffect(() => {
@@ -103,6 +108,41 @@ export default function LeagueDetailPage() {
     );
   }
 
+  const isMultiPlatform = new Set(seasons.map((s) => s.platform_type)).size > 1;
+  const platformLabel = (pt: string) => (pt.length <= 3 ? pt.toUpperCase() : pt.charAt(0).toUpperCase() + pt.slice(1));
+  const distinctPlatforms = [...new Set(seasons.map((s) => s.platform_type))];
+
+  const handleLink = async () => {
+    if (!leagueId || !linkTargetId.trim()) return;
+    setLinkLoading(true);
+    setLinkError(null);
+    try {
+      const data = await linkLeagues(leagueId, linkTargetId.trim());
+      setSeasons(data.seasons);
+      setLinkModalOpen(false);
+      setLinkTargetId("");
+    } catch (err) {
+      setLinkError(err instanceof Error ? err.message : "Failed to link leagues");
+    } finally {
+      setLinkLoading(false);
+    }
+  };
+
+  const handleUnlink = async (platformType: string) => {
+    if (!leagueId) return;
+    setLinkLoading(true);
+    setLinkError(null);
+    try {
+      const data = await unlinkLeagues(leagueId, platformType);
+      setSeasons(data.seasons);
+      setUnlinkModalOpen(false);
+    } catch (err) {
+      setLinkError(err instanceof Error ? err.message : "Failed to unlink leagues");
+    } finally {
+      setLinkLoading(false);
+    }
+  };
+
   const isPastSeason = league.season < getCurrentNflSeason();
   const isCurrentSeason = !isPastSeason;
 
@@ -126,22 +166,40 @@ export default function LeagueDetailPage() {
             {" "}&middot; {league.roster_size ?? "—"} roster spots &middot; {league.team_name ?? "My Team"}
           </p>
         </div>
-        {seasons.length > 1 && (
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-text-secondary">Season:</span>
-            <select
-              value={leagueId}
-              onChange={(e) => navigate(`/leagues/${e.target.value}`)}
-              className="rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-text-primary"
+        <div className="flex items-center gap-2">
+          {seasons.length > 1 && (
+            <>
+              <span className="text-sm text-text-secondary">Season:</span>
+              <select
+                value={leagueId}
+                onChange={(e) => navigate(`/leagues/${e.target.value}`)}
+                className="rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-text-primary"
+              >
+                {seasons.map((s) => (
+                  <option key={s.league_id} value={s.league_id}>
+                    {isMultiPlatform ? `${s.season} (${platformLabel(s.platform_type)})` : s.season}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
+          <div className="relative">
+            <button
+              onClick={() => setLinkModalOpen(true)}
+              className="rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-text-secondary hover:text-text-primary"
             >
-              {seasons.map((s) => (
-                <option key={s.league_id} value={s.league_id}>
-                  {s.season}
-                </option>
-              ))}
-            </select>
+              Link
+            </button>
+            {isMultiPlatform && (
+              <button
+                onClick={() => setUnlinkModalOpen(true)}
+                className="ml-1 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-text-secondary hover:text-text-primary"
+              >
+                Unlink
+              </button>
+            )}
           </div>
-        )}
+        </div>
       </div>
 
       {/* Tabs */}
@@ -189,6 +247,92 @@ export default function LeagueDetailPage() {
           <TransactionsTab transactions={league.recent_transactions} />
         )}
       </div>
+
+      {linkModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => { setLinkModalOpen(false); setLinkError(null); setLinkTargetId(""); }}
+        >
+          <div
+            className="rounded-xl border border-border bg-surface p-6 max-w-md w-full mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="font-heading text-lg font-semibold text-text-primary">
+              Link League Seasons
+            </h2>
+            <p className="mt-2 text-sm text-text-secondary">
+              Enter the league ID (UUID) of another league to link as part of this league group.
+            </p>
+            <input
+              type="text"
+              value={linkTargetId}
+              onChange={(e) => setLinkTargetId(e.target.value)}
+              placeholder="Target league ID"
+              className="mt-3 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-secondary"
+            />
+            {linkError && (
+              <p className="mt-2 text-sm text-destructive">{linkError}</p>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => { setLinkModalOpen(false); setLinkError(null); setLinkTargetId(""); }}
+                className="rounded-lg border border-border px-4 py-2 text-sm text-text-secondary hover:text-text-primary"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleLink}
+                disabled={linkLoading || !linkTargetId.trim()}
+                className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-background disabled:opacity-50"
+              >
+                {linkLoading ? "Linking..." : "Link"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {unlinkModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => { setUnlinkModalOpen(false); setLinkError(null); }}
+        >
+          <div
+            className="rounded-xl border border-border bg-surface p-6 max-w-md w-full mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="font-heading text-lg font-semibold text-text-primary">
+              Unlink Platform
+            </h2>
+            <p className="mt-2 text-sm text-text-secondary">
+              Select a platform to remove from this league group.
+            </p>
+            {linkError && (
+              <p className="mt-2 text-sm text-destructive">{linkError}</p>
+            )}
+            <div className="mt-3 space-y-2">
+              {distinctPlatforms.map((pt) => (
+                <button
+                  key={pt}
+                  onClick={() => handleUnlink(pt)}
+                  disabled={linkLoading}
+                  className="w-full rounded-lg border border-border px-4 py-2 text-left text-sm text-text-primary hover:bg-surface-hover disabled:opacity-50"
+                >
+                  {platformLabel(pt)}
+                </button>
+              ))}
+            </div>
+            <div className="mt-4 flex justify-end">
+              <button
+                onClick={() => { setUnlinkModalOpen(false); setLinkError(null); }}
+                className="rounded-lg border border-border px-4 py-2 text-sm text-text-secondary hover:text-text-primary"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

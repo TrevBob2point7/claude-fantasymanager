@@ -19,6 +19,24 @@ export function getLeagueSeasons(
   return get<{ seasons: LeagueSeason[] }>(`/leagues/${leagueId}/seasons`);
 }
 
+export function linkLeagues(
+  leagueId: string,
+  targetLeagueId: string,
+): Promise<{ seasons: LeagueSeason[] }> {
+  return post<{ seasons: LeagueSeason[] }>(`/leagues/${leagueId}/link`, {
+    target_league_id: targetLeagueId,
+  });
+}
+
+export function unlinkLeagues(
+  leagueId: string,
+  platformType: string,
+): Promise<{ seasons: LeagueSeason[] }> {
+  return post<{ seasons: LeagueSeason[] }>(`/leagues/${leagueId}/unlink`, {
+    platform_type: platformType,
+  });
+}
+
 export function discoverLeagues(
   platformAccountId: string,
   season: number,
