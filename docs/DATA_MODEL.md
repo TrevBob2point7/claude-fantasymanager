@@ -130,13 +130,14 @@ League metadata synced from platforms.
 | `league_type` | `leaguetype` | YES | — | |
 | `settings_json` | JSON | YES | — | Raw platform settings blob |
 | `previous_league_id` | VARCHAR(100) | YES | — | Platform's league ID for the prior season (used to chain seasons together) |
+| `league_group_id` | UUID | YES | — | Groups related seasons across platforms. Indexed. |
 | `created_at` | TIMESTAMPTZ | NO | `now()` | |
 | `updated_at` | TIMESTAMPTZ | NO | `now()` | Auto-updated |
 
 **Unique constraint:** `(platform_type, platform_league_id, season)`
 **Relationships:** `user_leagues`, `standings`, `matchups`, `player_scores`, `projected_scores`, `transactions`
 
-**Season chaining:** Sleeper (and potentially other platforms) assign different `platform_league_id` values to each season of the same logical league. The `previous_league_id` field stores the platform's league ID for the prior season, forming a linked list: `2025 → 2024 → 2023 → null`. This chain is used to group seasons for the League Detail season selector and Dashboard deduplication.
+**Season chaining:** Sleeper (and potentially other platforms) assign different `platform_league_id` values to each season of the same logical league. The `previous_league_id` field stores the platform's league ID for the prior season, forming a linked list: `2025 → 2024 → 2023 → null`. The `league_group_id` is the primary grouping mechanism — all seasons of the same logical league share the same UUID, enabling efficient queries for the League Detail season selector and Dashboard deduplication. The `previous_league_id` chain is still used during sync to discover and link historical seasons.
 
 ---
 
@@ -346,6 +347,7 @@ All primary keys have implicit indexes. Additional indexes:
 | `players` | `players_mfl_id_key` | `mfl_id` | UNIQUE |
 | `players` | `players_espn_id_key` | `espn_id` | UNIQUE |
 | `leagues` | `leagues_platform_type_platform_league_id_season_key` | `(platform_type, platform_league_id, season)` | UNIQUE |
+| `leagues` | `ix_leagues_league_group_id` | `league_group_id` | INDEX |
 | `platform_accounts` | `platform_accounts_user_id_platform_type_key` | `(user_id, platform_type)` | UNIQUE |
 | `user_leagues` | `user_leagues_league_id_platform_team_id_key` | `(league_id, platform_team_id)` | UNIQUE |
 | `rosters` | `rosters_user_league_id_player_id_key` | `(user_league_id, player_id)` | UNIQUE |

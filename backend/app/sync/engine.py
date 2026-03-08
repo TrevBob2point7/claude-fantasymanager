@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from sqlalchemy import and_, or_, select
@@ -172,6 +172,49 @@ class SyncEngine:
                 result = await self.db.execute(stmt)
                 league = result.scalar_one()
                 leagues.append(league)
+
+            # Auto-assign league_group_id for new leagues.
+            # Build an in-memory lookup so leagues upserted in the same
+            # batch can share a group_id even before flush.
+            batch_lookup = {
+                lg.platform_league_id: lg for lg in leagues
+            }
+            for league in leagues:
+                if league.league_group_id is not None:
+                    continue
+                # Walk the previous_league_id chain (in-memory first, then DB)
+                # to find an existing group_id anywhere in the chain.
+                visited = []
+                current = league
+                found_group = None
+                while current is not None:
+                    visited.append(current)
+                    prev_id = current.previous_league_id
+                    if not prev_id:
+                        break
+                    # Check in-memory batch first
+                    prev_league = batch_lookup.get(prev_id)
+                    if prev_league and prev_league.league_group_id:
+                        found_group = prev_league.league_group_id
+                        break
+                    if prev_league:
+                        current = prev_league
+                        continue
+                    # Fall back to DB
+                    result = await self.db.execute(
+                        select(League.league_group_id).where(
+                            League.platform_type == platform_account.platform_type,
+                            League.platform_league_id == prev_id,
+                            League.league_group_id.isnot(None),
+                        ).limit(1)
+                    )
+                    found_group = result.scalar_one_or_none()
+                    break
+
+                group_id = found_group or uuid4()
+                for lg in visited:
+                    if lg.league_group_id is None:
+                        lg.league_group_id = group_id
 
             await self.db.flush()
             await self._log_complete(log)
@@ -796,6 +839,10 @@ class SyncEngine:
             )
             result = await self.db.execute(stmt)
             db_league = result.scalar_one()
+
+            # Ensure historical league shares the parent's group
+            if db_league.league_group_id != league.league_group_id:
+                db_league.league_group_id = league.league_group_id
 
             # Sync all teams for the historical league
             await self._sync_user_leagues(
