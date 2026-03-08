@@ -28,7 +28,10 @@ from app.models.team_bye_week import TeamByeWeek
 from app.platforms.registry import get_adapter
 from app.platforms.schemas import PlatformMatchup as PlatformMatchupSchema
 from app.sync.bye_weeks import sync_bye_weeks
-from app.sync.player_import import get_or_create_player_by_sleeper_id
+from app.sync.player_import import (
+    get_or_create_player_by_mfl_id,
+    get_or_create_player_by_sleeper_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +39,35 @@ logger = logging.getLogger(__name__)
 class SyncEngine:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
+
+    async def _get_or_create_player(
+        self,
+        platform_type: PlatformType,
+        player_id: str,
+        pdata: dict,
+    ):
+        """Resolve a platform player ID to a Player record, platform-aware."""
+        if platform_type == PlatformType.mfl:
+            full_name = pdata.get("name") or "Unknown Player"
+            return await get_or_create_player_by_mfl_id(
+                self.db,
+                player_id,
+                full_name=full_name,
+                position=pdata.get("position"),
+                team=pdata.get("team"),
+            )
+        else:
+            full_name = (
+                f"{pdata.get('first_name', '')} {pdata.get('last_name', '')}".strip()
+                or pdata.get("full_name", "Unknown Player")
+            )
+            return await get_or_create_player_by_sleeper_id(
+                self.db,
+                player_id,
+                full_name=full_name,
+                position=pdata.get("position"),
+                team=pdata.get("team"),
+            )
 
     async def _log_start(
         self, user_id: UUID, platform_type: PlatformType, data_type: DataType
@@ -168,9 +200,7 @@ class SyncEngine:
         for pr in platform_rosters:
             # Determine if this roster belongs to the current app user
             is_current_user = (
-                platform_user_id
-                and pr.owner_id == platform_user_id
-                and user_id is not None
+                platform_user_id and pr.owner_id == platform_user_id and user_id is not None
             )
             row_user_id = user_id if is_current_user else None
 
@@ -244,9 +274,7 @@ class SyncEngine:
 
             # Get roster_positions from league settings_json for slot inference
             roster_positions = (
-                league.settings_json.get("roster_positions", [])
-                if league.settings_json
-                else []
+                league.settings_json.get("roster_positions", []) if league.settings_json else []
             )
             starter_slots = [pos for pos in roster_positions if pos not in ("BN", "IR")]
 
@@ -263,16 +291,10 @@ class SyncEngine:
 
                 for player_id_str in pr.player_ids:
                     pdata = players_map.get(player_id_str, {})
-                    full_name = (
-                        f"{pdata.get('first_name', '')} {pdata.get('last_name', '')}".strip()
-                        or pdata.get("full_name", "Unknown Player")
-                    )
-                    player = await get_or_create_player_by_sleeper_id(
-                        self.db,
+                    player = await self._get_or_create_player(
+                        league.platform_type,
                         player_id_str,
-                        full_name=full_name,
-                        position=pdata.get("position"),
-                        team=pdata.get("team"),
+                        pdata,
                     )
                     slot = None
                     if starter_slots and player_id_str in starter_slot_map:
@@ -282,11 +304,13 @@ class SyncEngine:
                     elif player_id_str in pr.taxi:
                         slot = "TAXI"
 
-                    self.db.add(Roster(
-                        user_league_id=ul.id,
-                        player_id=player.id,
-                        slot=slot,
-                    ))
+                    self.db.add(
+                        Roster(
+                            user_league_id=ul.id,
+                            player_id=player.id,
+                            slot=slot,
+                        )
+                    )
 
             await self.db.flush()
             await self._log_complete(log)
@@ -299,6 +323,7 @@ class SyncEngine:
         pm: PlatformMatchupSchema,
         players_map: dict[str, dict],
         starter_slots: list[str] | None = None,
+        platform_type: PlatformType | None = None,
     ) -> list[dict] | None:
         """Build starters JSON from a PlatformMatchup's starters data."""
         if not pm.starters:
@@ -306,18 +331,23 @@ class SyncEngine:
         result = []
         for i, pid in enumerate(pm.starters):
             pdata = players_map.get(pid, {})
-            name = (
-                f"{pdata.get('first_name', '')} {pdata.get('last_name', '')}".strip()
-                or pdata.get("full_name", "Unknown")
-            )
+            if platform_type == PlatformType.mfl:
+                name = pdata.get("name") or "Unknown"
+            else:
+                name = (
+                    f"{pdata.get('first_name', '')} {pdata.get('last_name', '')}".strip()
+                    or pdata.get("full_name", "Unknown")
+                )
             slot = starter_slots[i] if starter_slots and i < len(starter_slots) else None
-            result.append({
-                "player_id": pid,
-                "name": name,
-                "position": pdata.get("position"),
-                "points": pm.starters_points.get(pid),
-                "slot": slot,
-            })
+            result.append(
+                {
+                    "player_id": pid,
+                    "name": name,
+                    "position": pdata.get("position"),
+                    "points": pm.starters_points.get(pid),
+                    "slot": slot,
+                }
+            )
         return result
 
     async def sync_matchups(
@@ -338,9 +368,7 @@ class SyncEngine:
 
             # Extract starter slot labels from league settings
             roster_positions = (
-                league.settings_json.get("roster_positions", [])
-                if league.settings_json
-                else []
+                league.settings_json.get("roster_positions", []) if league.settings_json else []
             )
             starter_slots = [pos for pos in roster_positions if pos not in ("BN", "IR")]
 
@@ -371,10 +399,16 @@ class SyncEngine:
                     continue
 
                 home_starters = self._build_starters_json(
-                    home, players_map, starter_slots or None
+                    home,
+                    players_map,
+                    starter_slots or None,
+                    platform_type=league.platform_type,
                 )
                 away_starters = self._build_starters_json(
-                    away, players_map, starter_slots or None
+                    away,
+                    players_map,
+                    starter_slots or None,
+                    platform_type=league.platform_type,
                 )
 
                 # Check if matchup already exists
@@ -547,13 +581,10 @@ class SyncEngine:
                 # Process each added player as a separate transaction
                 for player_id_str in pt.player_ids_added:
                     pdata = players_map.get(player_id_str, {})
-                    full_name = (
-                        f"{pdata.get('first_name', '')} {pdata.get('last_name', '')}".strip()
-                        or pdata.get("full_name", "Unknown Player")
-                    )
-                    player = await get_or_create_player_by_sleeper_id(
-                        self.db, player_id_str, full_name=full_name,
-                        position=pdata.get("position"), team=pdata.get("team"),
+                    player = await self._get_or_create_player(
+                        league.platform_type,
+                        player_id_str,
+                        pdata,
                     )
                     to_ul = None
                     for rid in pt.roster_ids:
@@ -575,13 +606,10 @@ class SyncEngine:
 
                 for player_id_str in pt.player_ids_dropped:
                     pdata = players_map.get(player_id_str, {})
-                    full_name = (
-                        f"{pdata.get('first_name', '')} {pdata.get('last_name', '')}".strip()
-                        or pdata.get("full_name", "Unknown Player")
-                    )
-                    player = await get_or_create_player_by_sleeper_id(
-                        self.db, player_id_str, full_name=full_name,
-                        position=pdata.get("position"), team=pdata.get("team"),
+                    player = await self._get_or_create_player(
+                        league.platform_type,
+                        player_id_str,
+                        pdata,
                     )
                     from_ul = None
                     for rid in pt.roster_ids:
@@ -706,9 +734,7 @@ class SyncEngine:
             current_week = settings_json.get("leg", 17) if settings_json else 17
             for week in range(1, min(current_week + 1, 19)):
                 try:
-                    await self.sync_matchups(
-                        db_league, user_id, week, players_map=players_map
-                    )
+                    await self.sync_matchups(db_league, user_id, week, players_map=players_map)
                 except Exception:
                     logger.exception(
                         "Failed to sync matchups week %d for historical league %s",
@@ -716,9 +742,7 @@ class SyncEngine:
                         past_league.league_id,
                     )
                 try:
-                    await self.sync_transactions(
-                        db_league, user_id, week, players_map=players_map
-                    )
+                    await self.sync_transactions(db_league, user_id, week, players_map=players_map)
                 except Exception:
                     logger.exception(
                         "Failed to sync transactions week %d for historical league %s",
@@ -773,9 +797,7 @@ class SyncEngine:
         for league in leagues:
             # Sync all teams (user_leagues) for this league
             try:
-                await self._sync_user_leagues(
-                    league, user_id, platform_account.platform_user_id
-                )
+                await self._sync_user_leagues(league, user_id, platform_account.platform_user_id)
             except Exception as e:
                 logger.exception("Failed to sync user_leagues for league %s", league.id)
                 errors.append(f"user_leagues({league.name}): {e}")
@@ -792,9 +814,7 @@ class SyncEngine:
             current_week = league.settings_json.get("leg", 1) if league.settings_json else 1
             for week in range(1, min(current_week + 1, 19)):
                 try:
-                    await self.sync_matchups(
-                        league, user_id, week, players_map=players_map
-                    )
+                    await self.sync_matchups(league, user_id, week, players_map=players_map)
                 except Exception as e:
                     errors.append(f"matchups({league.name}, week {week}): {e}")
                     logger.exception("Failed to sync matchups week %d", week)
@@ -829,9 +849,7 @@ class SyncEngine:
                         synced.append("historical_seasons")
                 except Exception as e:
                     errors.append(f"historical({league.name}): {e}")
-                    logger.exception(
-                        "Failed to sync historical seasons for league %s", league.id
-                    )
+                    logger.exception("Failed to sync historical seasons for league %s", league.id)
 
         # Sync bye weeks if no data exists for this season
         try:

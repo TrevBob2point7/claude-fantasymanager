@@ -31,3 +31,6 @@ class PlatformAdapter(ABC):
 
     @abstractmethod
     async def get_transactions(self, league_id: str, week: int) -> list[PlatformTransaction]: ...
+
+    async def get_players_map(self) -> dict[str, dict]:
+        return {}

@@ -6,6 +6,11 @@ from pydantic import BaseModel, ConfigDict
 from app.models.enums import PlatformType
 
 
+class MFLLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
 class PlatformAccountCreate(BaseModel):
     platform_type: PlatformType
     platform_username: str | None = None
