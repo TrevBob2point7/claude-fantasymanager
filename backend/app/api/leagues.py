@@ -433,7 +433,14 @@ async def unlink_leagues(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Unlink leagues of a specific platform type from a league group."""
+    """Unlink leagues of a specific platform type from a league group.
+
+    Note: league_group_id lives on the shared League row, so unlinking
+    affects all users who belong to the affected leagues.  This is
+    intentional — grouping reflects a factual "same league" relationship,
+    not a per-user preference.  Re-evaluate if user-scoped grouping is
+    needed.
+    """
     # Verify the league belongs to the requesting user
     result = await db.execute(
         select(League)
