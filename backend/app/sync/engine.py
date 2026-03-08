@@ -122,9 +122,12 @@ class SyncEngine:
 
             platform_user_id = platform_account.platform_user_id
 
-            # Resolve username to numeric user ID if needed
-            if platform_account.platform_username and (
-                not platform_user_id or not platform_user_id.isdigit()
+            # Resolve username to numeric user ID if needed (Sleeper only —
+            # MFL uses the username directly as the user ID).
+            if (
+                platform_account.platform_type != PlatformType.mfl
+                and platform_account.platform_username
+                and (not platform_user_id or not platform_user_id.isdigit())
             ):
                 user_info = await adapter.get_user(platform_account.platform_username)
                 platform_user_id = user_info.user_id

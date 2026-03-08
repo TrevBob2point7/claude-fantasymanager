@@ -127,18 +127,21 @@ class MFLAdapter(PlatformAdapter):
             )
             resp.raise_for_status()
 
-        # Response is XML: <status cookie_name="MFL_USER_ID" cookie_value="..."/>
+        # Response is XML: <status MFL_USER_ID="...">OK</status>
+        # or <error>message</error> on failure
         root = ElementTree.fromstring(resp.text)
+        if root.tag == "error":
+            raise ValueError(f"MFL login failed: {root.text or 'unknown error'}")
+
         status_el = root if root.tag == "status" else root.find("status")
         if status_el is None:
             raise ValueError("MFL login failed: no status element in response")
 
-        cookie_name = status_el.get("cookie_name", "MFL_USER_ID")
-        cookie_value = status_el.get("cookie_value", "")
-        if not cookie_value:
-            raise ValueError("MFL login failed: empty cookie value")
+        mfl_user_id = status_el.get("MFL_USER_ID", "")
+        if not mfl_user_id:
+            raise ValueError("MFL login failed: no MFL_USER_ID in response")
 
-        self.cookie = f"{cookie_name}={cookie_value}"
+        self.cookie = f"MFL_USER_ID={mfl_user_id}"
 
         return PlatformUser(
             user_id=username,
