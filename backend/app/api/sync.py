@@ -1,12 +1,12 @@
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
-from app.core.database import get_db
+from app.core.database import get_db, async_session
 from app.models import PlatformAccount, SyncLog
 from app.models.user import User
 from app.schemas.sync import SyncLogRead, SyncResponse
@@ -17,9 +17,29 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/sync", tags=["sync"])
 
 
+async def _run_sync(user_id: UUID, account_id: UUID, season: int) -> None:
+    """Run sync in a background task with its own DB session."""
+    async with async_session() as db:
+        result = await db.execute(
+            select(PlatformAccount).where(PlatformAccount.id == account_id)
+        )
+        account = result.scalar_one_or_none()
+        if account is None:
+            logger.error("Background sync: account %s not found", account_id)
+            return
+
+        engine = SyncEngine(db)
+        try:
+            await engine.sync_all(user_id, account, season)
+            logger.info("Background sync completed for account %s season %d", account_id, season)
+        except Exception:
+            logger.exception("Background sync failed for account %s season %d", account_id, season)
+
+
 @router.post("/{account_id}", response_model=SyncResponse)
 async def trigger_sync(
     account_id: UUID,
+    background_tasks: BackgroundTasks,
     season: int = Query(2025, ge=2000, le=2100),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -37,9 +57,8 @@ async def trigger_sync(
             detail="Platform account not found",
         )
 
-    engine = SyncEngine(db)
-    result_data = await engine.sync_all(current_user.id, account, season)
-    return SyncResponse(**result_data)
+    background_tasks.add_task(_run_sync, current_user.id, account_id, season)
+    return SyncResponse(status="ok", synced=["sync started in background"], errors=[])
 
 
 @router.get("/log", response_model=list[SyncLogRead])
