@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import logging
 import time
 from datetime import datetime
 from xml.etree import ElementTree
@@ -18,6 +19,10 @@ from app.platforms.schemas import (
 )
 
 _CLIENT_TIMEOUT = 30.0
+_MAX_RETRIES = 5
+_RATE_LIMIT_INTERVAL = 2.0  # seconds between requests (MFL enforces strict rate limits)
+
+logger = logging.getLogger(__name__)
 
 
 def _current_nfl_season() -> int:
@@ -43,6 +48,10 @@ def _ensure_list(val: object) -> list:
 class MFLAdapter(PlatformAdapter):
     BASE_URL = "https://api.myfantasyleague.com"
 
+    # Class-level rate limiting shared across all adapter instances
+    _global_last_request_time: float = 0.0
+    _global_lock = asyncio.Lock()
+
     def __init__(
         self,
         credentials_json: dict | None = None,
@@ -52,7 +61,16 @@ class MFLAdapter(PlatformAdapter):
         self.year = year or _current_nfl_season()
         self._credentials = credentials_json or {}
         self.cookie = self._credentials.get("cookie")
-        self._last_request_time: float = 0.0
+        self._client: httpx.AsyncClient | None = None
+        # Per-league caches to avoid redundant API calls across weeks
+        self._schedule_cache: dict[str, dict[int, list]] = {}  # league_id -> {week: matchups_raw}
+        self._transactions_cache: dict[str, list] = {}  # league_id -> all raw transactions
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get or create a persistent HTTP client."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=_CLIENT_TIMEOUT, follow_redirects=True)
+        return self._client
 
     async def _request(
         self,
@@ -63,13 +81,7 @@ class MFLAdapter(PlatformAdapter):
         use_auth: bool = False,
         year: int | None = None,
     ) -> httpx.Response:
-        """Make a rate-limited HTTP request to MFL API."""
-        # Enforce 1 req/sec rate limit
-        now = time.monotonic()
-        elapsed = now - self._last_request_time
-        if elapsed < 1.0:
-            await asyncio.sleep(1.0 - elapsed)
-
+        """Make a rate-limited HTTP request to MFL API with retry on 429."""
         effective_year = year or self.year
         url = f"{self.BASE_URL}/{effective_year}{path}"
 
@@ -77,11 +89,33 @@ class MFLAdapter(PlatformAdapter):
         if use_auth and self.cookie:
             headers["Cookie"] = self.cookie
 
-        async with httpx.AsyncClient(timeout=_CLIENT_TIMEOUT, follow_redirects=True) as client:
-            self._last_request_time = time.monotonic()
+        for attempt in range(_MAX_RETRIES + 1):
+            # Enforce rate limit with class-level lock
+            async with MFLAdapter._global_lock:
+                now = time.monotonic()
+                elapsed = now - MFLAdapter._global_last_request_time
+                if elapsed < _RATE_LIMIT_INTERVAL:
+                    await asyncio.sleep(_RATE_LIMIT_INTERVAL - elapsed)
+                MFLAdapter._global_last_request_time = time.monotonic()
+
+            client = await self._get_client()
             resp = await client.request(method, url, params=params, headers=headers)
+
+            if resp.status_code == 429 and attempt < _MAX_RETRIES:
+                wait = 3 * (2 ** attempt)  # 3s, 6s, 12s, 24s, 48s
+                logger.warning(
+                    "MFL 429 rate-limited, retrying in %ds (attempt %d/%d)",
+                    wait, attempt + 1, _MAX_RETRIES,
+                )
+                await asyncio.sleep(wait)
+                continue
+
             resp.raise_for_status()
             return resp
+
+        # Should not reach here, but just in case
+        resp.raise_for_status()
+        return resp
 
     async def _api_get(
         self,
@@ -111,21 +145,22 @@ class MFLAdapter(PlatformAdapter):
         subsequent calls are authenticated.
         """
         # Enforce rate limit
-        now = time.monotonic()
-        elapsed = now - self._last_request_time
-        if elapsed < 1.0:
-            await asyncio.sleep(1.0 - elapsed)
+        async with MFLAdapter._global_lock:
+            now = time.monotonic()
+            elapsed = now - MFLAdapter._global_last_request_time
+            if elapsed < _RATE_LIMIT_INTERVAL:
+                await asyncio.sleep(_RATE_LIMIT_INTERVAL - elapsed)
+            MFLAdapter._global_last_request_time = time.monotonic()
 
         url = f"{self.BASE_URL}/{self.year}/login"
         password = self._credentials.get("password", "")
 
-        async with httpx.AsyncClient(timeout=_CLIENT_TIMEOUT, follow_redirects=True) as client:
-            self._last_request_time = time.monotonic()
-            resp = await client.post(
-                url,
-                data={"USERNAME": username, "PASSWORD": password, "XML": "1"},
-            )
-            resp.raise_for_status()
+        client = await self._get_client()
+        resp = await client.post(
+            url,
+            data={"USERNAME": username, "PASSWORD": password, "XML": "1"},
+        )
+        resp.raise_for_status()
 
         # Response is XML: <status MFL_USER_ID="...">OK</status>
         # or <error>message</error> on failure
@@ -250,6 +285,15 @@ class MFLAdapter(PlatformAdapter):
             for f in franchises
         ]
 
+    async def get_history_years(self, league_id: str) -> list[int]:
+        """Return all historical years for a league, newest first."""
+        data = await self._api_get("league", params={"L": league_id})
+        league_data = data.get("league") or {}
+        history = league_data.get("history") or {}
+        entries = _ensure_list(history.get("league"))
+        years = [int(h["year"]) for h in entries if h.get("year")]
+        return sorted(years, reverse=True)
+
     async def get_rosters(self, league_id: str) -> list[PlatformRosterEntry]:
         """Get all team rosters with player status categorization."""
         data = await self._api_get("rosters", params={"L": league_id})
@@ -271,9 +315,8 @@ class MFLAdapter(PlatformAdapter):
                 status = p.get("status", "ROSTER")
                 if status == "TAXI_SQUAD":
                     taxi.append(pid)
-                else:
-                    # ROSTER and INJURED_RESERVE both go in main player_ids
-                    player_ids.append(pid)
+                # All players go in player_ids; taxi list is used for slot tagging
+                player_ids.append(pid)
 
             results.append(
                 PlatformRosterEntry(
@@ -286,17 +329,29 @@ class MFLAdapter(PlatformAdapter):
             )
         return results
 
+    async def _get_schedule_for_week(self, league_id: str, week: int) -> list:
+        """Get schedule pairings for a specific week, fetching all weeks on first call."""
+        if league_id not in self._schedule_cache:
+            # Fetch full schedule (all weeks) in one API call
+            sched_data = await self._api_get("schedule", params={"L": league_id})
+            schedule = sched_data.get("schedule") or {}
+            weekly_schedules = schedule.get("weeklySchedule") or {}
+            weekly_list = _ensure_list(weekly_schedules)
+            cache: dict[int, list] = {}
+            for ws in weekly_list:
+                w = int(ws.get("week", 0))
+                cache[w] = _ensure_list(ws.get("matchup"))
+            self._schedule_cache[league_id] = cache
+        return self._schedule_cache[league_id].get(week, [])
+
     async def get_matchups(self, league_id: str, week: int) -> list[PlatformMatchup]:
         """Get matchup pairings and scores for a given week.
 
-        Requires two API calls: ``schedule`` for pairings and
-        ``weeklyResults`` for starters/scores.
+        Schedule pairings are fetched once (all weeks) and cached.
+        Weekly results still require a per-week API call.
         """
-        # Fetch schedule for pairings
-        sched_data = await self._api_get("schedule", params={"L": league_id, "W": str(week)})
-        schedule = sched_data.get("schedule") or {}
-        weekly_schedule = schedule.get("weeklySchedule") or {}
-        matchups_raw = _ensure_list(weekly_schedule.get("matchup"))
+        # Fetch schedule for pairings (cached after first call)
+        matchups_raw = await self._get_schedule_for_week(league_id, week)
 
         # Build matchup_id -> franchise pairings
         # Each franchise in a matchup gets the same matchup_id
@@ -311,7 +366,11 @@ class MFLAdapter(PlatformAdapter):
         # Fetch weekly results for starters and scores
         results_data = await self._api_get("weeklyResults", params={"L": league_id, "W": str(week)})
         weekly_results = results_data.get("weeklyResults") or {}
-        result_franchises = _ensure_list(weekly_results.get("franchise"))
+        # weeklyResults contains matchup[] -> franchise[] (not franchise at top level)
+        result_matchups = _ensure_list(weekly_results.get("matchup"))
+        result_franchises: list[dict] = []
+        for rm in result_matchups:
+            result_franchises.extend(_ensure_list(rm.get("franchise")))
 
         results: list[PlatformMatchup] = []
         for franchise in result_franchises:
@@ -527,15 +586,17 @@ class MFLAdapter(PlatformAdapter):
 
     def _detect_league_type(self, league_data: dict) -> str | None:
         """Infer league type from draftPlayerPool and other settings."""
+        best_lineup = league_data.get("bestLineup", "")
         draft_pool = league_data.get("draftPlayerPool", "")
         keeper_count = league_data.get("keeperCount", "0")
 
-        if draft_pool in ("Rookie", "Veteran"):
+        if best_lineup == "Yes":
+            return "bestball"
+        elif draft_pool in ("Rookie", "Veteran"):
             return "dynasty"
         elif keeper_count and int(keeper_count) > 0:
             return "keeper"
         else:
-            # "Both" or empty = redraft
             return "redraft"
 
     @staticmethod

@@ -1,5 +1,5 @@
 import { get, post } from "./client";
-import type { DiscoveredLeague, League, LeagueDetail, LeagueSeason } from "./types";
+import type { DiscoveredLeague, League, LeagueDetail, LeagueSeason, Matchup, MatchupSummary, Transaction } from "./types";
 
 export function getLeagues(opts?: { season?: number; latest?: boolean }): Promise<League[]> {
   const params = new URLSearchParams();
@@ -35,6 +35,22 @@ export function unlinkLeagues(
   return post<{ seasons: LeagueSeason[] }>(`/leagues/${leagueId}/unlink`, {
     platform_type: platformType,
   });
+}
+
+export function getMatchupSummary(leagueId: string): Promise<MatchupSummary[]> {
+  return get<MatchupSummary[]>(`/leagues/${leagueId}/matchups/summary`);
+}
+
+export function getMatchupDetail(leagueId: string, week: number): Promise<Matchup[]> {
+  return get<Matchup[]>(`/leagues/${leagueId}/matchups/${week}`);
+}
+
+export function getLeagueTransactions(
+  leagueId: string,
+  week?: number,
+): Promise<Transaction[]> {
+  const query = week != null ? `?week=${week}` : "";
+  return get<Transaction[]>(`/leagues/${leagueId}/transactions${query}`);
 }
 
 export function discoverLeagues(

@@ -143,7 +143,11 @@ class SyncEngine:
             # each league with full metadata from get_league.
             if platform_account.platform_type == PlatformType.mfl:
                 enriched = []
-                for pl in platform_leagues:
+                for idx, pl in enumerate(platform_leagues, 1):
+                    logger.info(
+                        "MFL enriching league %d/%d: %s",
+                        idx, len(platform_leagues), pl.league_id,
+                    )
                     full = await adapter.get_league(pl.league_id)
                     full.user_franchise_id = pl.user_franchise_id
                     enriched.append(full)
@@ -187,36 +191,62 @@ class SyncEngine:
                 )
                 result = await self.db.execute(stmt)
                 league = result.scalar_one()
+                # Expire to ensure we see the updated values from the upsert
+                await self.db.refresh(league)
                 leagues.append(league)
 
-            # Auto-assign league_group_id for new leagues.
-            # Build an in-memory lookup so leagues upserted in the same
-            # batch can share a group_id even before flush.
+            # Auto-assign league_group_id.
+            # For MFL, the same platform_league_id spans multiple seasons,
+            # so we group by platform_league_id first, then walk the
+            # previous_league_id chain for cross-ID grouping (Sleeper).
+            #
+            # Step 1: Group leagues that share a platform_league_id (MFL)
+            # or are linked via previous_league_id chains.
+            by_plat_id: dict[str, list[League]] = {}
+            for lg in leagues:
+                by_plat_id.setdefault(lg.platform_league_id, []).append(lg)
+
+            # For each group of same-platform_league_id leagues, unify
+            # their league_group_id (pick existing or create new).
+            for siblings in by_plat_id.values():
+                # Also check DB for other seasons of the same league
+                existing_group = None
+                for lg in siblings:
+                    if lg.league_group_id:
+                        existing_group = lg.league_group_id
+                        break
+                if not existing_group:
+                    plat_id = siblings[0].platform_league_id
+                    result = await self.db.execute(
+                        select(League.league_group_id).where(
+                            League.platform_type == platform_account.platform_type,
+                            League.platform_league_id == plat_id,
+                            League.league_group_id.isnot(None),
+                        ).limit(1)
+                    )
+                    existing_group = result.scalar_one_or_none()
+
+                group_id = existing_group or uuid4()
+                for lg in siblings:
+                    lg.league_group_id = group_id
+
+            # Step 2: Walk previous_league_id chains to merge groups
+            # across different platform_league_ids (e.g. Sleeper).
             batch_lookup = {
                 lg.platform_league_id: lg for lg in leagues
             }
+            # Map current group_id -> canonical group_id for merging
+            group_remap: dict[UUID, UUID] = {}
+
             for league in leagues:
-                if league.league_group_id is not None:
-                    continue
-                # Walk the previous_league_id chain (in-memory first, then DB)
-                # to find an existing group_id anywhere in the chain.
-                visited = []
-                current = league
-                found_group = None
-                while current is not None:
-                    visited.append(current)
-                    prev_id = current.previous_league_id
-                    if not prev_id:
-                        break
-                    # Check in-memory batch first
-                    prev_league = batch_lookup.get(prev_id)
-                    if prev_league and prev_league.league_group_id:
-                        found_group = prev_league.league_group_id
-                        break
-                    if prev_league:
-                        current = prev_league
-                        continue
-                    # Fall back to DB
+                prev_id = league.previous_league_id
+                if not prev_id or prev_id == league.platform_league_id:
+                    continue  # same-ID grouping already handled above
+
+                # Find the group of the previous league
+                prev_league = batch_lookup.get(prev_id)
+                prev_group = prev_league.league_group_id if prev_league else None
+                if not prev_group:
                     result = await self.db.execute(
                         select(League.league_group_id).where(
                             League.platform_type == platform_account.platform_type,
@@ -224,13 +254,27 @@ class SyncEngine:
                             League.league_group_id.isnot(None),
                         ).limit(1)
                     )
-                    found_group = result.scalar_one_or_none()
-                    break
+                    prev_group = result.scalar_one_or_none()
 
-                group_id = found_group or uuid4()
-                for lg in visited:
-                    if lg.league_group_id is None:
-                        lg.league_group_id = group_id
+                if prev_group and prev_group != league.league_group_id:
+                    # Merge: map league's current group to prev_group
+                    old_group = league.league_group_id
+                    if old_group:
+                        group_remap[old_group] = prev_group
+
+            # Apply remaps
+            if group_remap:
+                for lg in leagues:
+                    if lg.league_group_id in group_remap:
+                        lg.league_group_id = group_remap[lg.league_group_id]
+
+            # Also update DB rows that share remapped group IDs
+            for old_gid, new_gid in group_remap.items():
+                await self.db.execute(
+                    sa.update(League)
+                    .where(League.league_group_id == old_gid)
+                    .values(league_group_id=new_gid)
+                )
 
             await self.db.flush()
             await self._log_complete(log)
@@ -245,6 +289,7 @@ class SyncEngine:
         user_id: UUID | None,
         platform_user_id: str | None,
         credentials_json: dict | None = None,
+        adapter: object | None = None,
     ) -> None:
         """Create user_league entries for ALL teams in a league.
 
@@ -253,7 +298,8 @@ class SyncEngine:
         Only the roster owned by the current app user gets user_id set;
         all other teams get user_id=NULL.
         """
-        adapter = get_adapter(league.platform_type, credentials_json=credentials_json)
+        if adapter is None:
+            adapter = get_adapter(league.platform_type, credentials_json=credentials_json)
         platform_rosters = await adapter.get_rosters(league.platform_league_id)
         league_users = await adapter.get_league_users(league.platform_league_id)
 
@@ -305,11 +351,13 @@ class SyncEngine:
         user_id: UUID,
         players_map: dict[str, dict] | None = None,
         credentials_json: dict | None = None,
+        adapter: object | None = None,
     ) -> None:
         """Sync rosters for a league."""
         log = await self._log_start(user_id, league.platform_type, DataType.rosters)
         try:
-            adapter = get_adapter(league.platform_type, credentials_json=credentials_json)
+            if adapter is None:
+                adapter = get_adapter(league.platform_type, credentials_json=credentials_json)
             platform_rosters = await adapter.get_rosters(league.platform_league_id)
 
             # Fetch player data if not provided
@@ -427,11 +475,13 @@ class SyncEngine:
         week: int,
         players_map: dict[str, dict] | None = None,
         credentials_json: dict | None = None,
+        adapter: object | None = None,
     ) -> None:
         """Sync matchups for a league week."""
         log = await self._log_start(user_id, league.platform_type, DataType.matchups)
         try:
-            adapter = get_adapter(league.platform_type, credentials_json=credentials_json)
+            if adapter is None:
+                adapter = get_adapter(league.platform_type, credentials_json=credentials_json)
             platform_matchups = await adapter.get_matchups(league.platform_league_id, week)
 
             if players_map is None:
@@ -525,12 +575,14 @@ class SyncEngine:
             raise
 
     async def sync_standings(
-        self, league: League, user_id: UUID, credentials_json: dict | None = None
+        self, league: League, user_id: UUID, credentials_json: dict | None = None,
+        adapter: object | None = None,
     ) -> None:
         """Calculate standings from matchups, or use platform-provided standings."""
         log = await self._log_start(user_id, league.platform_type, DataType.standings)
         try:
-            adapter = get_adapter(league.platform_type, credentials_json=credentials_json)
+            if adapter is None:
+                adapter = get_adapter(league.platform_type, credentials_json=credentials_json)
             platform_standings = await adapter.get_standings(league.platform_league_id)
 
             result = await self.db.execute(
@@ -668,11 +720,13 @@ class SyncEngine:
         week: int,
         players_map: dict[str, dict] | None = None,
         credentials_json: dict | None = None,
+        adapter: object | None = None,
     ) -> None:
         """Sync transactions for a league week."""
         log = await self._log_start(user_id, league.platform_type, DataType.transactions)
         try:
-            adapter = get_adapter(league.platform_type, credentials_json=credentials_json)
+            if adapter is None:
+                adapter = get_adapter(league.platform_type, credentials_json=credentials_json)
             platform_txns = await adapter.get_transactions(league.platform_league_id, week)
             if players_map is None:
                 players_map = {}
@@ -763,184 +817,240 @@ class SyncEngine:
         user_id: UUID,
         platform_account: PlatformAccount,
         players_map: dict[str, dict] | None = None,
+        adapter: object | None = None,
     ) -> None:
-        """Walk the previous_league_id chain to sync historical seasons with full data."""
-        prev_league_id = league.previous_league_id
-        adapter = get_adapter(
-            platform_account.platform_type,
-            credentials_json=platform_account.credentials_json,
-        )
+        """Sync historical league seasons.
+
+        For MFL, uses the history entries (same league_id, different years).
+        For Sleeper, walks the previous_league_id chain.
+        Only syncs league metadata, user_leagues, and standings.
+        Matchups and transactions are fetched lazily when the user views them.
+        """
+        if adapter is None:
+            adapter = get_adapter(
+                platform_account.platform_type,
+                credentials_json=platform_account.credentials_json,
+            )
         credentials_json = platform_account.credentials_json
 
-        # For MFL, track expected season as we walk backwards
-        expected_season = league.season - 1
-
-        while prev_league_id:
-            # Check if this historical league already exists in DB
-            # For MFL, same league_id spans multiple seasons — filter by expected season
-            existing_query = select(League).where(
-                League.platform_type == platform_account.platform_type,
-                League.platform_league_id == prev_league_id,
+        if platform_account.platform_type == PlatformType.mfl:
+            await self._sync_mfl_historical(
+                league, user_id, platform_account,
+                credentials_json, adapter, players_map,
             )
-            if platform_account.platform_type == PlatformType.mfl:
-                existing_query = existing_query.where(League.season == expected_season)
-            result = await self.db.execute(existing_query)
-            existing_league = result.scalar_one_or_none()
-            if existing_league is not None:
-                # League exists — re-sync matchups to backfill any missing data
-                hist_settings = existing_league.settings_json or {}
-                hist_week = int(hist_settings.get("leg", 0)) or int(
-                    hist_settings.get("endWeek", 17)
+        else:
+            await self._sync_chain_historical(
+                league, user_id, platform_account,
+                credentials_json, adapter, players_map,
+            )
+
+    async def _sync_mfl_historical(
+        self,
+        league: League,
+        user_id: UUID,
+        platform_account: PlatformAccount,
+        credentials_json: dict | None,
+        adapter: object,
+        players_map: dict[str, dict] | None = None,
+    ) -> None:
+        """Sync MFL historical seasons using the league history entries.
+
+        MFL reuses the same league_id across years, so we fetch
+        the history list and sync each past season directly.
+        """
+        # Get all historical years from the platform
+        year_adapter = get_adapter(
+            platform_account.platform_type,
+            credentials_json=credentials_json,
+            year=league.season,
+        )
+        all_years = await year_adapter.get_history_years(
+            league.platform_league_id,
+        )
+        # Only sync years before the current season
+        years = [y for y in all_years if y < league.season]
+
+        if not years:
+            return
+
+        for year in years:
+            # Check if already synced
+            result = await self.db.execute(
+                select(League).where(
+                    League.platform_type == platform_account.platform_type,
+                    League.platform_league_id == league.platform_league_id,
+                    League.season == year,
                 )
-                for week in range(1, min(hist_week + 1, 19)):
-                    try:
-                        await self.sync_matchups(
-                            existing_league,
-                            user_id,
-                            week,
-                            players_map=players_map,
-                            credentials_json=credentials_json,
-                        )
-                    except Exception:
-                        logger.exception(
-                            "Failed to re-sync matchups week %d for historical league %s",
-                            week,
-                            prev_league_id,
-                        )
-                # Continue walking the chain to backfill older seasons too
-                prev_league_id = existing_league.previous_league_id
-                expected_season -= 1
+            )
+            if result.scalar_one_or_none() is not None:
                 continue
 
-            # Courtesy delay between API calls
             await asyncio.sleep(0.05)
 
-            # Fetch the historical league
-            if platform_account.platform_type == PlatformType.mfl:
-                # MFL uses the same league_id across years — create adapter with historical year
-                hist_adapter = get_adapter(
-                    platform_account.platform_type,
-                    credentials_json=credentials_json,
-                    year=expected_season,
-                )
-                past_league = await hist_adapter.get_league(prev_league_id)
-            else:
-                past_league = await adapter.get_league(prev_league_id)
-
-            # Merge roster_positions into settings_json
-            settings_json = {**(past_league.settings or {})}
-            if past_league.roster_positions is not None:
-                settings_json["roster_positions"] = past_league.roster_positions
-
-            # Upsert the historical league
-            stmt = (
-                pg_insert(League)
-                .values(
-                    platform_type=platform_account.platform_type,
-                    platform_league_id=past_league.league_id,
-                    name=past_league.name,
-                    season=past_league.season,
-                    roster_size=past_league.roster_size,
-                    scoring_type=past_league.scoring_type,
-                    league_type=past_league.league_type,
-                    settings_json=settings_json,
-                    previous_league_id=past_league.previous_league_id,
-                )
-                .on_conflict_do_update(
-                    index_elements=["platform_type", "platform_league_id", "season"],
-                    set_={
-                        "name": past_league.name,
-                        "roster_size": past_league.roster_size,
-                        "scoring_type": past_league.scoring_type,
-                        "league_type": past_league.league_type,
-                        "settings_json": settings_json,
-                        "previous_league_id": past_league.previous_league_id,
-                    },
-                )
-                .returning(League)
-            )
-            result = await self.db.execute(stmt)
-            db_league = result.scalar_one()
-
-            # Ensure historical league shares the parent's group
-            if db_league.league_group_id != league.league_group_id:
-                db_league.league_group_id = league.league_group_id
-
-            # Sync all teams for the historical league
-            await self._sync_user_leagues(
-                db_league,
-                user_id,
-                platform_account.platform_user_id,
+            year_adapter = get_adapter(
+                platform_account.platform_type,
                 credentials_json=credentials_json,
+                year=year,
+            )
+            past_league = await year_adapter.get_league(
+                league.platform_league_id,
             )
 
-            # Sync rosters
-            try:
-                await self.sync_rosters(
-                    db_league, user_id, players_map=players_map, credentials_json=credentials_json
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to sync rosters for historical league %s", past_league.league_id
-                )
-
-            # Sync matchups and transactions for all weeks
-            settings = settings_json or {}
-            current_week = int(settings.get("leg", 0)) or int(settings.get("endWeek", 17))
-            for week in range(1, min(current_week + 1, 19)):
-                try:
-                    await self.sync_matchups(
-                        db_league,
-                        user_id,
-                        week,
-                        players_map=players_map,
-                        credentials_json=credentials_json,
-                    )
-                except Exception:
-                    logger.exception(
-                        "Failed to sync matchups week %d for historical league %s",
-                        week,
-                        past_league.league_id,
-                    )
-                try:
-                    await self.sync_transactions(
-                        db_league,
-                        user_id,
-                        week,
-                        players_map=players_map,
-                        credentials_json=credentials_json,
-                    )
-                except Exception:
-                    logger.exception(
-                        "Failed to sync transactions week %d for historical league %s",
-                        week,
-                        past_league.league_id,
-                    )
-
-            # Sync standings
-            try:
-                await self.sync_standings(
-                    db_league, user_id, credentials_json=credentials_json
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to sync standings for historical league %s", past_league.league_id
-                )
-
-            await self.db.flush()
+            db_league = await self._upsert_historical_league(
+                past_league, league, platform_account,
+            )
+            await self._sync_historical_league_data(
+                db_league, user_id, platform_account,
+                credentials_json, year_adapter,
+                players_map=players_map,
+            )
 
             logger.info(
                 "Synced historical league %s season %d",
-                past_league.league_id,
-                past_league.season,
+                league.platform_league_id, year,
             )
 
-            # Continue walking the chain
+    async def _sync_chain_historical(
+        self,
+        league: League,
+        user_id: UUID,
+        platform_account: PlatformAccount,
+        credentials_json: dict | None,
+        adapter: object,
+        players_map: dict[str, dict] | None = None,
+    ) -> None:
+        """Sync historical seasons by walking previous_league_id chain.
+
+        Used by Sleeper and other platforms where each season has a
+        different league ID linked via previous_league_id.
+        """
+        prev_league_id = league.previous_league_id
+
+        while prev_league_id:
+            result = await self.db.execute(
+                select(League).where(
+                    League.platform_type == platform_account.platform_type,
+                    League.platform_league_id == prev_league_id,
+                )
+            )
+            existing_league = result.scalar_one_or_none()
+            if existing_league is not None:
+                prev_league_id = existing_league.previous_league_id
+                continue
+
+            await asyncio.sleep(0.05)
+            past_league = await adapter.get_league(prev_league_id)
+
+            db_league = await self._upsert_historical_league(
+                past_league, league, platform_account,
+            )
+            await self._sync_historical_league_data(
+                db_league, user_id, platform_account,
+                credentials_json, adapter,
+                players_map=players_map,
+            )
+
+            logger.info(
+                "Synced historical league %s season %d",
+                past_league.league_id, past_league.season,
+            )
+
             prev_league_id = past_league.previous_league_id
-            expected_season -= 1
+
+    async def _upsert_historical_league(
+        self,
+        past_league,
+        parent_league: League,
+        platform_account: PlatformAccount,
+    ) -> League:
+        """Upsert a historical league and assign it to the parent's group."""
+        settings_json = {**(past_league.settings or {})}
+        if past_league.roster_positions is not None:
+            settings_json["roster_positions"] = past_league.roster_positions
+        # Carry over user_franchise_id from the parent so owner matching works
+        parent_settings = parent_league.settings_json or {}
+        if "user_franchise_id" in parent_settings:
+            settings_json["user_franchise_id"] = parent_settings["user_franchise_id"]
+
+        stmt = (
+            pg_insert(League)
+            .values(
+                platform_type=platform_account.platform_type,
+                platform_league_id=past_league.league_id,
+                name=past_league.name,
+                season=past_league.season,
+                roster_size=past_league.roster_size,
+                scoring_type=past_league.scoring_type,
+                league_type=past_league.league_type,
+                settings_json=settings_json,
+                previous_league_id=past_league.previous_league_id,
+            )
+            .on_conflict_do_update(
+                index_elements=[
+                    "platform_type", "platform_league_id", "season",
+                ],
+                set_={
+                    "name": past_league.name,
+                    "roster_size": past_league.roster_size,
+                    "scoring_type": past_league.scoring_type,
+                    "league_type": past_league.league_type,
+                    "settings_json": settings_json,
+                    "previous_league_id": past_league.previous_league_id,
+                },
+            )
+            .returning(League)
+        )
+        result = await self.db.execute(stmt)
+        db_league = result.scalar_one()
+
+        if db_league.league_group_id != parent_league.league_group_id:
+            db_league.league_group_id = parent_league.league_group_id
+
+        await self.db.flush()
+        return db_league
+
+    async def _sync_historical_league_data(
+        self,
+        db_league: League,
+        user_id: UUID,
+        platform_account: PlatformAccount,
+        credentials_json: dict | None,
+        adapter: object,
+        players_map: dict[str, dict] | None = None,
+    ) -> None:
+        """Sync user_leagues and standings for a historical league.
+
+        Rosters are not synced here — they are fetched when the user
+        triggers a per-league sync on a specific season.
+        """
+        await self._sync_user_leagues(
+            db_league,
+            user_id,
+            platform_account.platform_user_id,
+            credentials_json=credentials_json,
+            adapter=adapter,
+        )
+
+        try:
+            await self.sync_standings(
+                db_league, user_id,
+                credentials_json=credentials_json,
+                adapter=adapter,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to sync standings for historical league %s",
+                db_league.platform_league_id,
+            )
+
+        await self.db.flush()
 
     async def sync_all(self, user_id: UUID, platform_account: PlatformAccount, season: int) -> dict:
-        """Orchestrate a full sync for a platform account."""
+        """Orchestrate a full sync for a platform account.
+
+        Only syncs league metadata, user_leagues, rosters, and standings.
+        Matchups and transactions are fetched lazily when the user views them.
+        """
         synced: list[str] = []
         errors: list[str] = []
 
@@ -957,24 +1067,24 @@ class SyncEngine:
         # 2. Fetch player data once for use across all leagues
         players_map: dict[str, dict] = {}
         credentials_json = platform_account.credentials_json
+        adapter = get_adapter(
+            platform_account.platform_type, credentials_json=credentials_json
+        )
         try:
-            adapter = get_adapter(
-                platform_account.platform_type, credentials_json=credentials_json
-            )
             players_map = await adapter.get_players_map()
             logger.info("Fetched %d players from platform", len(players_map))
         except Exception:
             logger.warning("Could not fetch players map, will use stubs")
 
-        # 3. For each league, sync user_leagues, rosters, matchups, standings, transactions
+        # 3. For each league, sync user_leagues, rosters, standings
         for league in leagues:
-            # Sync all teams (user_leagues) for this league
             try:
                 await self._sync_user_leagues(
                     league,
                     user_id,
                     platform_account.platform_user_id,
                     credentials_json=credentials_json,
+                    adapter=adapter,
                 )
             except Exception as e:
                 logger.exception("Failed to sync user_leagues for league %s", league.id)
@@ -982,7 +1092,8 @@ class SyncEngine:
 
             try:
                 await self.sync_rosters(
-                    league, user_id, players_map=players_map, credentials_json=credentials_json
+                    league, user_id, players_map=players_map,
+                    credentials_json=credentials_json, adapter=adapter,
                 )
                 if "rosters" not in synced:
                     synced.append("rosters")
@@ -990,41 +1101,10 @@ class SyncEngine:
                 errors.append(f"rosters({league.name}): {e}")
                 logger.exception("Failed to sync rosters for league %s", league.id)
 
-            # Sync recent weeks (1-18 for NFL)
-            settings = league.settings_json or {}
-            current_week = int(settings.get("leg", 0)) or int(settings.get("endWeek", 1))
-            for week in range(1, min(current_week + 1, 19)):
-                try:
-                    await self.sync_matchups(
-                        league,
-                        user_id,
-                        week,
-                        players_map=players_map,
-                        credentials_json=credentials_json,
-                    )
-                except Exception as e:
-                    errors.append(f"matchups({league.name}, week {week}): {e}")
-                    logger.exception("Failed to sync matchups week %d", week)
-
-                try:
-                    await self.sync_transactions(
-                        league,
-                        user_id,
-                        week,
-                        players_map=players_map,
-                        credentials_json=credentials_json,
-                    )
-                except Exception as e:
-                    errors.append(f"transactions({league.name}, week {week}): {e}")
-                    logger.exception("Failed to sync transactions week %d", week)
-
-            if "matchups" not in synced:
-                synced.append("matchups")
-            if "transactions" not in synced:
-                synced.append("transactions")
-
             try:
-                await self.sync_standings(league, user_id, credentials_json=credentials_json)
+                await self.sync_standings(
+                    league, user_id, credentials_json=credentials_json, adapter=adapter,
+                )
                 if "standings" not in synced:
                     synced.append("standings")
             except Exception as e:
@@ -1036,7 +1116,8 @@ class SyncEngine:
             if league.previous_league_id:
                 try:
                     await self.sync_historical_seasons(
-                        league, user_id, platform_account, players_map=players_map
+                        league, user_id, platform_account,
+                        players_map=players_map, adapter=adapter,
                     )
                     if "historical_seasons" not in synced:
                         synced.append("historical_seasons")

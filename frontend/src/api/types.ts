@@ -118,6 +118,16 @@ export interface LeagueDetail extends League {
   current_week: number | null;
 }
 
+export interface MatchupSummary {
+  id: string;
+  week: number;
+  home_team_name: string | null;
+  away_team_name: string | null;
+  home_score: string | null;
+  away_score: string | null;
+  is_user_matchup: boolean;
+}
+
 export interface LeagueSeason {
   season: number;
   league_id: string;

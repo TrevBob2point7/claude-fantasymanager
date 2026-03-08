@@ -120,10 +120,19 @@ export default function LinkAccountsPage() {
     setSyncingAccount(accountId);
     setSyncMessage(null);
     try {
-      const result = await triggerSync(accountId);
-      setSyncMessage(
-        `Sync ${result.status}: ${result.synced.join(", ")}`,
-      );
+      await triggerSync(accountId, (event) => {
+        if (event.type === "progress") {
+          setSyncMessage(event.message ?? "Syncing...");
+        } else if (event.type === "done") {
+          const parts: string[] = [];
+          if (event.errors?.length) {
+            parts.push(`${event.errors.length} error(s)`);
+          }
+          setSyncMessage(parts.length ? `Sync complete with ${parts.join(", ")}` : "Sync complete");
+        } else if (event.type === "error") {
+          setSyncMessage(event.message ?? "Sync failed");
+        }
+      });
       loadAccounts();
     } catch (err) {
       setSyncMessage(err instanceof Error ? err.message : "Sync failed");

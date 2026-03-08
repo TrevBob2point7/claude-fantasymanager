@@ -96,6 +96,19 @@ class TransactionRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class MatchupSummaryRead(BaseModel):
+    """Lightweight matchup data — scores + teams, no starters."""
+    id: UUID
+    week: int
+    home_team_name: str | None
+    away_team_name: str | None
+    home_score: Decimal | None
+    away_score: Decimal | None
+    is_user_matchup: bool = False
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class LeagueSeasonRead(BaseModel):
     season: int
     league_id: UUID

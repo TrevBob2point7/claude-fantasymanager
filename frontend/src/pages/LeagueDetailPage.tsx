@@ -1,6 +1,7 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { getLeagueDetail, getLeagueSeasons, linkLeagues, unlinkLeagues } from "../api/leagues";
+import { getLeagueDetail, getLeagueSeasons, linkLeagues, unlinkLeagues, getMatchupSummary, getMatchupDetail, getLeagueTransactions } from "../api/leagues";
+import { triggerLeagueSync, type SyncEvent } from "../api/sync";
 import { getRosterADP } from "../api/adp";
 import { getCurrentNflSeason } from "../api/season";
 import type {
@@ -9,6 +10,7 @@ import type {
   RosterPlayer,
   Standing,
   Matchup,
+  MatchupSummary,
   MatchupPlayer,
   Transaction,
 } from "../api/types";
@@ -47,6 +49,28 @@ export default function LeagueDetailPage() {
   const [linkTargetId, setLinkTargetId] = useState("");
   const [linkError, setLinkError] = useState<string | null>(null);
   const [linkLoading, setLinkLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+
+  const handleLeagueSync = useCallback(async () => {
+    if (!leagueId || syncing) return;
+    setSyncing(true);
+    setSyncMessage("Syncing...");
+    try {
+      await triggerLeagueSync(leagueId, (event: SyncEvent) => {
+        if (event.type === "progress") setSyncMessage(event.message ?? "Syncing...");
+        if (event.type === "done") setSyncMessage(null);
+      });
+      // Refresh league data
+      const data = await getLeagueDetail(leagueId);
+      setLeague(data);
+    } catch {
+      setSyncMessage("Sync failed");
+      setTimeout(() => setSyncMessage(null), 3000);
+    } finally {
+      setSyncing(false);
+    }
+  }, [leagueId, syncing]);
 
   // Fetch league detail when leagueId changes
   useEffect(() => {
@@ -183,6 +207,13 @@ export default function LeagueDetailPage() {
               </select>
             </>
           )}
+          <button
+            onClick={handleLeagueSync}
+            disabled={syncing}
+            className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
+          >
+            {syncing ? syncMessage ?? "Syncing..." : "Sync"}
+          </button>
           <div className="relative">
             <button
               onClick={() => setLinkModalOpen(true)}
@@ -241,10 +272,10 @@ export default function LeagueDetailPage() {
         )}
         {activeTab === "standings" && <StandingsTab standings={league.standings} />}
         {activeTab === "matchups" && (
-          <MatchupsTab matchups={league.recent_matchups} teamName={league.team_name} />
+          <LazyMatchupsTab leagueId={league.id} teamName={league.team_name} />
         )}
         {activeTab === "transactions" && (
-          <TransactionsTab transactions={league.recent_transactions} />
+          <LazyTransactionsTab leagueId={league.id} />
         )}
       </div>
 
@@ -949,19 +980,61 @@ function StandingsTab({ standings }: { standings: LeagueDetail["standings"] }) {
 }
 
 // ---------------------------------------------------------------------------
-// Matchups Tab (existing, preserved)
+// Lazy Matchups Tab — fetches summary on mount, detail on expand
 // ---------------------------------------------------------------------------
 
-function MatchupsTab({ matchups, teamName }: { matchups: LeagueDetail["recent_matchups"]; teamName: string | null }) {
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+function LazyMatchupsTab({ leagueId, teamName }: { leagueId: string; teamName: string | null }) {
+  const [summaries, setSummaries] = useState<MatchupSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedWeek, setExpandedWeek] = useState<number | null>(null);
+  const [weekDetail, setWeekDetail] = useState<Matchup[] | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
 
-  const userMatchups = matchups
+  useEffect(() => {
+    setLoading(true);
+    getMatchupSummary(leagueId)
+      .then(setSummaries)
+      .catch(() => setSummaries([]))
+      .finally(() => setLoading(false));
+  }, [leagueId]);
+
+  const handleExpand = async (week: number) => {
+    if (expandedWeek === week) {
+      setExpandedWeek(null);
+      setWeekDetail(null);
+      return;
+    }
+    setExpandedWeek(week);
+    setDetailLoading(true);
+    try {
+      const detail = await getMatchupDetail(leagueId, week);
+      setWeekDetail(detail);
+    } catch {
+      setWeekDetail(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-8">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+        <span className="ml-2 text-sm text-text-secondary">Loading matchups...</span>
+      </div>
+    );
+  }
+
+  const userMatchups = summaries
     .filter((m) => m.is_user_matchup)
     .sort((a, b) => a.week - b.week);
 
   if (userMatchups.length === 0) {
     return <p className="py-8 text-center text-text-secondary">No matchup data available.</p>;
   }
+
+  // Find the expanded week's detail matchup for starters
+  const expandedMatchup = weekDetail?.find((m) => m.is_user_matchup) ?? null;
 
   return (
     <div className="space-y-3">
@@ -973,10 +1046,8 @@ function MatchupsTab({ matchups, teamName }: { matchups: LeagueDetail["recent_ma
         const won = scored && myScore > oppScore;
         const tied = scored && myScore === oppScore;
         const played = scored && (myScore > 0 || oppScore > 0);
-        const expanded = expandedId === m.id;
-        const hasStarters = m.home_starters != null || m.away_starters != null;
+        const isExpanded = expandedWeek === m.week;
 
-        // Left = away, right = home — matches expanded roster column order
         const leftTeam = m.away_team_name ?? "Away";
         const rightTeam = m.home_team_name ?? "Home";
         const leftScore = safeScore(m.away_score);
@@ -995,7 +1066,7 @@ function MatchupsTab({ matchups, teamName }: { matchups: LeagueDetail["recent_ma
             <button
               type="button"
               className="w-full p-4 text-left"
-              onClick={() => setExpandedId(expanded ? null : m.id)}
+              onClick={() => handleExpand(m.week)}
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -1010,9 +1081,7 @@ function MatchupsTab({ matchups, teamName }: { matchups: LeagueDetail["recent_ma
                     </span>
                   )}
                 </div>
-                {hasStarters && (
-                  <span className="text-xs text-text-secondary">{expanded ? "▲" : "▼"}</span>
-                )}
+                <span className="text-xs text-text-secondary">{isExpanded ? "▲" : "▼"}</span>
               </div>
               <div className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
                 <div className="flex items-center justify-between min-w-0">
@@ -1042,17 +1111,56 @@ function MatchupsTab({ matchups, teamName }: { matchups: LeagueDetail["recent_ma
                 </div>
               </div>
             </button>
-            {expanded && hasStarters && (
-              <MatchupStarters
-                leftStarters={m.away_starters}
-                rightStarters={m.home_starters}
-              />
+            {isExpanded && (
+              detailLoading ? (
+                <div className="border-t border-border px-4 py-3 text-center">
+                  <div className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+                  <span className="ml-2 text-sm text-text-secondary">Loading lineups...</span>
+                </div>
+              ) : expandedMatchup?.home_starters || expandedMatchup?.away_starters ? (
+                <MatchupStarters
+                  leftStarters={expandedMatchup.away_starters}
+                  rightStarters={expandedMatchup.home_starters}
+                />
+              ) : (
+                <div className="border-t border-border px-4 py-3 text-center text-sm text-text-secondary">
+                  No starter data available
+                </div>
+              )
             )}
           </div>
         );
       })}
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Lazy Transactions Tab
+// ---------------------------------------------------------------------------
+
+function LazyTransactionsTab({ leagueId }: { leagueId: string }) {
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    getLeagueTransactions(leagueId)
+      .then(setTransactions)
+      .catch(() => setTransactions([]))
+      .finally(() => setLoading(false));
+  }, [leagueId]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-8">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+        <span className="ml-2 text-sm text-text-secondary">Loading transactions...</span>
+      </div>
+    );
+  }
+
+  return <TransactionsTab transactions={transactions} />;
 }
 
 function MatchupStarters({

@@ -1,3 +1,4 @@
+import contextlib
 import logging
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
@@ -25,10 +26,12 @@ from app.schemas.league import (
     LeagueUnlinkRequest,
     MatchupPlayerRead,
     MatchupRead,
+    MatchupSummaryRead,
     RosterEntryRead,
     StandingRead,
     TransactionRead,
 )
+from app.sync.engine import SyncEngine
 
 logger = logging.getLogger(__name__)
 
@@ -495,3 +498,298 @@ async def unlink_leagues(
     ]
 
     return LeagueSeasonsResponse(seasons=seasons)
+
+
+# ---------------------------------------------------------------------------
+# Lazy-fetch endpoints: matchups & transactions
+# ---------------------------------------------------------------------------
+
+async def _get_league_and_account(
+    league_id: UUID, user_id: UUID, db: AsyncSession
+) -> tuple[League, UserLeague, PlatformAccount]:
+    """Verify user access and find platform account for a league."""
+    result = await db.execute(
+        select(League, UserLeague)
+        .join(UserLeague, UserLeague.league_id == League.id)
+        .where(League.id == league_id, UserLeague.user_id == user_id)
+    )
+    row = result.one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="League not found")
+    league, user_league = row
+
+    result = await db.execute(
+        select(PlatformAccount).where(
+            PlatformAccount.user_id == user_id,
+            PlatformAccount.platform_type == league.platform_type,
+        )
+    )
+    account = result.scalar_one_or_none()
+    if account is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No platform account found for this league",
+        )
+    return league, user_league, account
+
+
+def _current_week(league: League) -> int:
+    """Get the current week from league settings.
+
+    Sleeper uses ``leg`` for the current week.
+    MFL uses ``lastRegularSeasonWeek`` / ``endWeek`` (no per-week cursor).
+    Falls back to 17 for completed seasons, 1 otherwise.
+    """
+    settings = league.settings_json or {}
+    # Sleeper stores the current "leg"
+    leg = settings.get("leg")
+    if leg:
+        return int(leg)
+    # MFL: use endWeek (includes playoffs) or lastRegularSeasonWeek
+    end_week = settings.get("endWeek")
+    if end_week:
+        return int(end_week)
+    last_reg = settings.get("lastRegularSeasonWeek")
+    if last_reg:
+        return int(last_reg)
+    # Default: assume full season for completed leagues
+    return 17
+
+
+@router.get("/{league_id}/matchups/summary", response_model=list[MatchupSummaryRead])
+async def get_matchup_summary(
+    league_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return all matchup summaries (scores + teams, no starters) for a league.
+
+    Fetches from platform on-demand if no matchups are cached.
+    Completed weeks are never re-fetched.
+    """
+    league, user_league, account = await _get_league_and_account(
+        league_id, current_user.id, db
+    )
+
+    cur_week = _current_week(league)
+    season_finished = league.season < datetime.now(UTC).year
+
+    # Check what's already cached
+    result = await db.execute(
+        select(Matchup).where(Matchup.league_id == league_id).order_by(Matchup.week.asc())
+    )
+    cached = result.scalars().all()
+    cached_weeks = {m.week for m in cached}
+
+    # Determine which weeks need fetching
+    weeks_to_fetch: list[int] = []
+    for w in range(1, min(cur_week + 1, 19)):
+        if w not in cached_weeks:
+            weeks_to_fetch.append(w)
+        elif w == cur_week and not season_finished:
+            # Current week may have updated scores — re-fetch
+            weeks_to_fetch.append(w)
+
+    if weeks_to_fetch:
+        adapter = get_adapter(
+            account.platform_type,
+            credentials_json=account.credentials_json,
+            year=league.season,
+        )
+        players_map: dict[str, dict] = {}
+        with contextlib.suppress(Exception):
+            players_map = await adapter.get_players_map()
+
+        engine = SyncEngine(db)
+        for w in weeks_to_fetch:
+            try:
+                await engine.sync_matchups(
+                    league, current_user.id, w,
+                    players_map=players_map, adapter=adapter,
+                )
+            except Exception:
+                logger.exception("Failed to fetch matchups for week %d", w)
+
+        await db.commit()
+
+        # Re-query
+        result = await db.execute(
+            select(Matchup).where(Matchup.league_id == league_id).order_by(Matchup.week.asc())
+        )
+        cached = result.scalars().all()
+
+    # Build name lookup
+    result = await db.execute(select(UserLeague).where(UserLeague.league_id == league_id))
+    all_uls = {ul.id: ul.team_name for ul in result.scalars().all()}
+
+    return [
+        MatchupSummaryRead(
+            id=m.id,
+            week=m.week,
+            home_team_name=all_uls.get(m.home_user_league_id),
+            away_team_name=all_uls.get(m.away_user_league_id),
+            home_score=m.home_score,
+            away_score=m.away_score,
+            is_user_matchup=(
+                m.home_user_league_id == user_league.id
+                or m.away_user_league_id == user_league.id
+            ),
+        )
+        for m in cached
+    ]
+
+
+@router.get("/{league_id}/matchups/{week}", response_model=list[MatchupRead])
+async def get_matchup_detail(
+    league_id: UUID,
+    week: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return full matchup detail (with starters) for a specific week.
+
+    Fetches from platform if not cached or if it's the current week.
+    """
+    league, user_league, account = await _get_league_and_account(
+        league_id, current_user.id, db
+    )
+
+    cur_week = _current_week(league)
+    season_finished = league.season < datetime.now(UTC).year
+
+    # Check cache
+    result = await db.execute(
+        select(Matchup).where(Matchup.league_id == league_id, Matchup.week == week)
+    )
+    cached = result.scalars().all()
+
+    # Fetch if missing, or current/future week in an active season
+    needs_fetch = not cached or (week >= cur_week and not season_finished)
+    if needs_fetch:
+        adapter = get_adapter(
+            account.platform_type,
+            credentials_json=account.credentials_json,
+            year=league.season,
+        )
+        players_map: dict[str, dict] = {}
+        with contextlib.suppress(Exception):
+            players_map = await adapter.get_players_map()
+
+        engine = SyncEngine(db)
+        try:
+            await engine.sync_matchups(
+                league, current_user.id, week,
+                players_map=players_map, adapter=adapter,
+            )
+            await db.commit()
+        except Exception:
+            logger.exception("Failed to fetch matchup detail for week %d", week)
+
+        result = await db.execute(
+            select(Matchup).where(Matchup.league_id == league_id, Matchup.week == week)
+        )
+        cached = result.scalars().all()
+
+    # Build name lookup
+    result = await db.execute(select(UserLeague).where(UserLeague.league_id == league_id))
+    all_uls = {ul.id: ul.team_name for ul in result.scalars().all()}
+
+    return [
+        MatchupRead(
+            id=m.id,
+            week=m.week,
+            home_team_name=all_uls.get(m.home_user_league_id),
+            away_team_name=all_uls.get(m.away_user_league_id),
+            home_score=m.home_score,
+            away_score=m.away_score,
+            is_user_matchup=(
+                m.home_user_league_id == user_league.id
+                or m.away_user_league_id == user_league.id
+            ),
+            home_starters=[
+                MatchupPlayerRead(**p) for p in m.home_starters_json
+            ] if m.home_starters_json else None,
+            away_starters=[
+                MatchupPlayerRead(**p) for p in m.away_starters_json
+            ] if m.away_starters_json else None,
+        )
+        for m in cached
+    ]
+
+
+@router.get("/{league_id}/transactions", response_model=list[TransactionRead])
+async def get_league_transactions(
+    league_id: UUID,
+    week: int | None = Query(None, ge=1, le=18),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return transactions for a league, optionally filtered by week.
+
+    Fetches from platform if not cached or if it's the current week.
+    """
+    league, _user_league, account = await _get_league_and_account(
+        league_id, current_user.id, db
+    )
+
+    cur_week = _current_week(league)
+    season_finished = league.season < datetime.now(UTC).year
+
+    # Check cache
+    tx_query = select(Transaction).where(Transaction.league_id == league_id)
+    if week is not None:
+        tx_query = tx_query.where(Transaction.week == week)
+    tx_query = tx_query.order_by(Transaction.timestamp.desc())
+
+    result = await db.execute(tx_query.options(selectinload(Transaction.player)))
+    cached = result.scalars().all()
+
+    # Determine if we need to fetch
+    needs_fetch = False
+    if week is not None:
+        if not cached or (week >= cur_week and not season_finished):
+            needs_fetch = True
+    elif not cached:
+        needs_fetch = True
+
+    if needs_fetch:
+        adapter = get_adapter(
+            account.platform_type,
+            credentials_json=account.credentials_json,
+            year=league.season,
+        )
+        players_map: dict[str, dict] = {}
+        with contextlib.suppress(Exception):
+            players_map = await adapter.get_players_map()
+
+        engine = SyncEngine(db)
+        weeks_to_fetch = [week] if week else list(range(1, min(cur_week + 1, 19)))
+        for w in weeks_to_fetch:
+            try:
+                await engine.sync_transactions(
+                    league, current_user.id, w,
+                    players_map=players_map, adapter=adapter,
+                )
+            except Exception:
+                logger.exception("Failed to fetch transactions for week %d", w)
+
+        await db.commit()
+
+        result = await db.execute(tx_query.options(selectinload(Transaction.player)))
+        cached = result.scalars().all()
+
+    # Build name lookup
+    result = await db.execute(select(UserLeague).where(UserLeague.league_id == league_id))
+    all_uls = {ul.id: ul.team_name for ul in result.scalars().all()}
+
+    return [
+        TransactionRead(
+            id=t.id,
+            type=t.type,
+            player_name=t.player.full_name if t.player else None,
+            from_team_name=all_uls.get(t.from_user_league_id),
+            to_team_name=all_uls.get(t.to_user_league_id),
+            timestamp=t.timestamp,
+        )
+        for t in cached
+    ]
