@@ -99,10 +99,19 @@ class TransactionRead(BaseModel):
 class LeagueSeasonRead(BaseModel):
     season: int
     league_id: UUID
+    platform_type: PlatformType | None = None
 
 
 class LeagueSeasonsResponse(BaseModel):
     seasons: list[LeagueSeasonRead]
+
+
+class LeagueLinkRequest(BaseModel):
+    target_league_id: UUID
+
+
+class LeagueUnlinkRequest(BaseModel):
+    platform_type: PlatformType
 
 
 class LeagueDetailRead(BaseModel):

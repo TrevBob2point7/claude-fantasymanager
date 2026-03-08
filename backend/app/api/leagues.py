@@ -1,9 +1,9 @@
 import logging
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, exists, select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -17,9 +17,11 @@ from app.schemas.league import (
     DiscoveredLeague,
     DiscoverRequest,
     LeagueDetailRead,
+    LeagueLinkRequest,
     LeagueRead,
     LeagueSeasonRead,
     LeagueSeasonsResponse,
+    LeagueUnlinkRequest,
     MatchupPlayerRead,
     MatchupRead,
     RosterEntryRead,
@@ -114,20 +116,13 @@ async def list_leagues(
     )
 
     if latest:
-        # Only return leagues whose platform_league_id is NOT referenced
-        # as another league's previous_league_id (i.e. the head of each chain).
-        # Correlated subquery scoped by platform_type to avoid cross-platform collisions.
-        from sqlalchemy.orm import aliased
-        Successor = aliased(League)
-        query = query.where(
-            ~exists(
-                select(Successor.id).where(
-                    and_(
-                        Successor.previous_league_id == League.platform_league_id,
-                        Successor.platform_type == League.platform_type,
-                    )
-                )
-            )
+        # Return the most recent season per league group using DISTINCT ON
+        query = (
+            select(League, UserLeague.team_name)
+            .join(UserLeague, UserLeague.league_id == League.id)
+            .where(UserLeague.user_id == current_user.id)
+            .distinct(League.league_group_id)
+            .order_by(League.league_group_id, League.season.desc())
         )
     elif season is not None:
         query = query.where(League.season == season)
@@ -320,8 +315,8 @@ async def get_league_seasons(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Walk the previous_league_id chain to find all seasons for a league."""
-    # Verify user has access to this league
+    """Return all seasons in the same league group."""
+    # Verify user has access
     result = await db.execute(
         select(League)
         .join(UserLeague, UserLeague.league_id == League.id)
@@ -334,45 +329,153 @@ async def get_league_seasons(
             detail="League not found",
         )
 
-    seasons = [LeagueSeasonRead(season=league.season, league_id=league.id)]
-
-    # Walk backward via previous_league_id
-    current = league
-    while current.previous_league_id:
+    if league.league_group_id:
+        # Get all seasons in the group
         result = await db.execute(
             select(League)
-            .join(UserLeague, UserLeague.league_id == League.id)
-            .where(
-                League.platform_type == league.platform_type,
-                League.platform_league_id == current.previous_league_id,
-                UserLeague.user_id == current_user.id,
-            )
+            .where(League.league_group_id == league.league_group_id)
+            .order_by(League.season.desc())
         )
-        prev = result.scalar_one_or_none()
-        if prev is None:
-            break
-        seasons.append(LeagueSeasonRead(season=prev.season, league_id=prev.id))
-        current = prev
-
-    # Walk forward — find leagues whose previous_league_id points to us
-    current = league
-    while True:
-        result = await db.execute(
-            select(League)
-            .join(UserLeague, UserLeague.league_id == League.id)
-            .where(
-                League.platform_type == league.platform_type,
-                League.previous_league_id == current.platform_league_id,
-                UserLeague.user_id == current_user.id,
+        group_leagues = result.scalars().all()
+        seasons = [
+            LeagueSeasonRead(season=lg.season, league_id=lg.id, platform_type=lg.platform_type)
+            for lg in group_leagues
+        ]
+    else:
+        seasons = [
+            LeagueSeasonRead(
+                season=league.season, league_id=league.id, platform_type=league.platform_type
             )
-        )
-        nxt = result.scalar_one_or_none()
-        if nxt is None:
-            break
-        seasons.append(LeagueSeasonRead(season=nxt.season, league_id=nxt.id))
-        current = nxt
+        ]
 
-    # Sort by season descending
-    seasons.sort(key=lambda s: s.season, reverse=True)
+    return LeagueSeasonsResponse(seasons=seasons)
+
+
+@router.post("/{league_id}/link", response_model=LeagueSeasonsResponse)
+async def link_leagues(
+    league_id: UUID,
+    body: LeagueLinkRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Link two leagues into the same league group."""
+    # Verify both leagues belong to the requesting user
+    result = await db.execute(
+        select(League)
+        .join(UserLeague, UserLeague.league_id == League.id)
+        .where(League.id == league_id, UserLeague.user_id == current_user.id)
+    )
+    source_league = result.scalar_one_or_none()
+    if source_league is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="League not found",
+        )
+
+    result = await db.execute(
+        select(League)
+        .join(UserLeague, UserLeague.league_id == League.id)
+        .where(League.id == body.target_league_id, UserLeague.user_id == current_user.id)
+    )
+    target_league = result.scalar_one_or_none()
+    if target_league is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Target league not found",
+        )
+
+    # Ensure source has a league_group_id
+    if not source_league.league_group_id:
+        source_league.league_group_id = uuid4()
+
+    source_group_id = source_league.league_group_id
+
+    # Update all leagues in the target's group to use the source's group_id
+    if target_league.league_group_id:
+        await db.execute(
+            update(League)
+            .where(League.league_group_id == target_league.league_group_id)
+            .values(league_group_id=source_group_id)
+        )
+    else:
+        target_league.league_group_id = source_group_id
+
+    await db.commit()
+
+    # Return the updated season list
+    result = await db.execute(
+        select(League)
+        .where(League.league_group_id == source_group_id)
+        .order_by(League.season.desc())
+    )
+    group_leagues = result.scalars().all()
+    seasons = [
+        LeagueSeasonRead(season=lg.season, league_id=lg.id, platform_type=lg.platform_type)
+        for lg in group_leagues
+    ]
+
+    return LeagueSeasonsResponse(seasons=seasons)
+
+
+@router.post("/{league_id}/unlink", response_model=LeagueSeasonsResponse)
+async def unlink_leagues(
+    league_id: UUID,
+    body: LeagueUnlinkRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Unlink leagues of a specific platform type from a league group."""
+    # Verify the league belongs to the requesting user
+    result = await db.execute(
+        select(League)
+        .join(UserLeague, UserLeague.league_id == League.id)
+        .where(League.id == league_id, UserLeague.user_id == current_user.id)
+    )
+    league = result.scalar_one_or_none()
+    if league is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="League not found",
+        )
+
+    if not league.league_group_id:
+        # Nothing to unlink
+        return LeagueSeasonsResponse(
+            seasons=[
+                LeagueSeasonRead(
+                    season=league.season, league_id=league.id, platform_type=league.platform_type
+                )
+            ]
+        )
+
+    original_group_id = league.league_group_id
+
+    # Assign a new group_id to leagues in this group with the specified platform_type
+    new_group_id = uuid4()
+    await db.execute(
+        update(League)
+        .where(
+            League.league_group_id == original_group_id,
+            League.platform_type == body.platform_type,
+        )
+        .values(league_group_id=new_group_id)
+    )
+
+    await db.commit()
+
+    # Refresh the league to get updated group_id
+    await db.refresh(league)
+
+    # Return seasons for the original league's (possibly updated) group
+    result = await db.execute(
+        select(League)
+        .where(League.league_group_id == league.league_group_id)
+        .order_by(League.season.desc())
+    )
+    group_leagues = result.scalars().all()
+    seasons = [
+        LeagueSeasonRead(season=lg.season, league_id=lg.id, platform_type=lg.platform_type)
+        for lg in group_leagues
+    ]
 
     return LeagueSeasonsResponse(seasons=seasons)
