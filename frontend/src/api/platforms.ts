@@ -17,3 +17,12 @@ export function createPlatformAccount(
 export function deletePlatformAccount(accountId: string): Promise<void> {
   return del<void>(`/platforms/accounts/${accountId}`);
 }
+
+export interface MFLLoginRequest {
+  username: string;
+  password: string;
+}
+
+export function mflLogin(data: MFLLoginRequest): Promise<PlatformAccount> {
+  return post<PlatformAccount>("/platforms/accounts/mfl/login", data);
+}
