@@ -54,3 +54,13 @@ class PlatformTransaction:
     player_ids_dropped: list[str] = field(default_factory=list)
     roster_ids: list[str] = field(default_factory=list)
     timestamp: int = 0  # unix millis
+
+
+@dataclass
+class PlatformStanding:
+    franchise_id: str
+    wins: int = 0
+    losses: int = 0
+    ties: int = 0
+    points_for: float = 0.0
+    points_against: float = 0.0

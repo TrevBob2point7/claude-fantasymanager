@@ -12,6 +12,7 @@ from app.platforms.schemas import (
     PlatformLeagueUser,
     PlatformMatchup,
     PlatformRosterEntry,
+    PlatformStanding,
     PlatformTransaction,
     PlatformUser,
 )
@@ -408,6 +409,36 @@ class MFLAdapter(PlatformAdapter):
                     )
                 )
 
+        return results
+
+    async def get_standings(self, league_id: str) -> list[PlatformStanding] | None:
+        """Fetch league standings from MFL."""
+        data = await self._api_get("leagueStandings", params={"L": league_id})
+        standings_wrapper = data.get("leagueStandings") or {}
+        franchises = _ensure_list(standings_wrapper.get("franchise"))
+        if not franchises:
+            return None
+
+        results: list[PlatformStanding] = []
+        for f in franchises:
+            franchise_id = str(f.get("id", ""))
+            if not franchise_id:
+                continue
+            wins = int(f.get("h2hw", 0))
+            losses = int(f.get("h2hl", 0))
+            ties = int(f.get("h2ht", 0))
+            pf = float(f.get("pf", 0))
+            pa = float(f.get("pa", 0))
+            results.append(
+                PlatformStanding(
+                    franchise_id=franchise_id,
+                    wins=wins,
+                    losses=losses,
+                    ties=ties,
+                    points_for=pf,
+                    points_against=pa,
+                )
+            )
         return results
 
     async def get_players_map(self) -> dict[str, dict]:
