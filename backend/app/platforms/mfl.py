@@ -25,6 +25,11 @@ def _current_nfl_season() -> int:
     return now.year if now.month >= 3 else now.year - 1
 
 
+def _is_player_id(val: str) -> bool:
+    """Return True if val looks like an MFL player ID (non-empty, all digits)."""
+    return bool(val) and val.isdigit()
+
+
 def _ensure_list(val: object) -> list:
     """MFL returns a single dict instead of a list when there's only one item."""
     if val is None:
@@ -513,8 +518,8 @@ class MFLAdapter(PlatformAdapter):
         added_str = parts[0] if len(parts) > 0 else ""
         dropped_str = parts[1] if len(parts) > 1 else ""
 
-        added = [pid for pid in added_str.split(",") if pid and not pid.startswith("FP_")]
-        dropped = [pid for pid in dropped_str.split(",") if pid and not pid.startswith("FP_")]
+        added = [pid for pid in added_str.split(",") if _is_player_id(pid)]
+        dropped = [pid for pid in dropped_str.split(",") if _is_player_id(pid)]
         return added, dropped
 
     @staticmethod
@@ -522,4 +527,4 @@ class MFLAdapter(PlatformAdapter):
         """Parse a comma-separated list of player IDs, filtering out draft picks."""
         if not ids_str:
             return []
-        return [pid for pid in ids_str.split(",") if pid and not pid.startswith("FP_")]
+        return [pid for pid in ids_str.split(",") if _is_player_id(pid)]

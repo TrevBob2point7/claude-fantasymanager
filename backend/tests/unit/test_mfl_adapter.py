@@ -434,6 +434,7 @@ class TestGetTransactions:
         assert len(txns) == 1
         assert txns[0].type == "waiver"
         assert txns[0].player_ids_added == ["13940"]
+        assert txns[0].player_ids_dropped == []
 
     async def test_transactions_empty(self):
         adapter = MFLAdapter(year=YEAR)
@@ -694,6 +695,12 @@ class TestTransactionParsing:
         added, dropped = MFLAdapter._parse_transaction_string("13940,|15289,|25.00")
         assert added == ["13940"]
         assert dropped == ["15289"]
+
+    def test_parse_transaction_string_bbid_no_drop(self):
+        """BBID waiver with no dropped player — bid amount must not appear as a drop."""
+        added, dropped = MFLAdapter._parse_transaction_string("13940,|0.00|")
+        assert added == ["13940"]
+        assert dropped == []
 
     def test_parse_transaction_string_filters_draft_picks(self):
         added, dropped = MFLAdapter._parse_transaction_string("14777,FP_0001_2025_3,|15331,")
