@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func as sa_func
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -116,13 +117,15 @@ async def list_leagues(
     )
 
     if latest:
-        # Return the most recent season per league group using DISTINCT ON
+        # Return the most recent season per league group using DISTINCT ON.
+        # COALESCE with id so NULL league_group_id leagues don't collapse.
+        group_key = sa_func.coalesce(League.league_group_id, League.id)
         query = (
             select(League, UserLeague.team_name)
             .join(UserLeague, UserLeague.league_id == League.id)
             .where(UserLeague.user_id == current_user.id)
-            .distinct(League.league_group_id)
-            .order_by(League.league_group_id, League.season.desc())
+            .distinct(group_key)
+            .order_by(group_key, League.season.desc())
         )
     elif season is not None:
         query = query.where(League.season == season)
