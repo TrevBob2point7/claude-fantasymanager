@@ -138,6 +138,17 @@ class SyncEngine:
                 raise ValueError("No platform user ID or username available")
 
             platform_leagues = await adapter.get_leagues(platform_user_id, season)
+
+            # MFL's get_leagues (myleagues) returns minimal data — enrich
+            # each league with full metadata from get_league.
+            if platform_account.platform_type == PlatformType.mfl:
+                enriched = []
+                for pl in platform_leagues:
+                    full = await adapter.get_league(pl.league_id)
+                    full.user_franchise_id = pl.user_franchise_id
+                    enriched.append(full)
+                platform_leagues = enriched
+
             leagues = []
             for pl in platform_leagues:
                 # Merge roster_positions and user_franchise_id into settings_json
