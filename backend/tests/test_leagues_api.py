@@ -421,19 +421,19 @@ class TestGetLeagueDetail:
 class TestGetLeagueSeasons:
     """GET /api/leagues/{league_id}/seasons"""
 
-    async def test_get_league_seasons_returns_chain(
+    async def test_get_league_seasons_returns_group(
         self, authenticated_client: AsyncClient, db_session
     ):
-        """New endpoint returns [{season, league_id}] sorted by season desc."""
+        """Returns all seasons in the same league_group_id, sorted desc."""
         user = authenticated_client.test_user  # type: ignore[attr-defined]
+        shared_group = uuid.uuid4()
 
-        # Create a chain of 3 seasons: 2025 -> 2024 -> 2023
         league_2023 = League(
             platform_type=PlatformType.sleeper,
             platform_league_id="lg_chain_2023",
             name="Chain League 2023",
             season=2023,
-            previous_league_id=None,
+            league_group_id=shared_group,
         )
         db_session.add(league_2023)
         await db_session.flush()
@@ -444,7 +444,7 @@ class TestGetLeagueSeasons:
             platform_league_id="lg_chain_2024",
             name="Chain League 2024",
             season=2024,
-            previous_league_id="lg_chain_2023",
+            league_group_id=shared_group,
         )
         db_session.add(league_2024)
         await db_session.flush()
@@ -455,7 +455,7 @@ class TestGetLeagueSeasons:
             platform_league_id="lg_chain_2025",
             name="Chain League 2025",
             season=2025,
-            previous_league_id="lg_chain_2024",
+            league_group_id=shared_group,
         )
         db_session.add(league_2025)
         await db_session.flush()
@@ -483,15 +483,16 @@ class TestGetLeagueSeasons:
         assert seasons[1]["season"] == 2024
         assert seasons[2]["season"] == 2023
 
-        # Each entry should have a league_id
+        # Each entry should have league_id, season, and platform_type
         for entry in seasons:
             assert "league_id" in entry
             assert "season" in entry
+            assert "platform_type" in entry
 
     async def test_get_league_seasons_single_season(
         self, authenticated_client: AsyncClient, db_session
     ):
-        """League with no previous_league_id returns single-entry list."""
+        """League with no league_group_id returns single-entry list."""
         user = authenticated_client.test_user  # type: ignore[attr-defined]
 
         league = League(
@@ -499,7 +500,6 @@ class TestGetLeagueSeasons:
             platform_league_id="lg_single",
             name="Single Season League",
             season=2025,
-            previous_league_id=None,
         )
         db_session.add(league)
         await db_session.flush()
@@ -526,21 +526,21 @@ class TestGetLeagueSeasons:
 
 @pytest.mark.asyncio(loop_scope="session")
 class TestGetLeagueSeasonsAccessControl:
-    """GET /api/leagues/{league_id}/seasons — access checks on chain walks."""
+    """GET /api/leagues/{league_id}/seasons — access control with league_group_id."""
 
-    async def test_chain_walk_stops_at_unlinked_league(
+    async def test_group_returns_all_seasons_regardless_of_user_league(
         self, authenticated_client: AsyncClient, db_session
     ):
-        """Backward/forward walks only return seasons the user is linked to."""
+        """All seasons in a group are returned even if user only has user_league for one."""
         user = authenticated_client.test_user  # type: ignore[attr-defined]
+        shared_group = uuid.uuid4()
 
-        # Create a 3-season chain: 2025 -> 2024 -> 2023
         league_2023 = League(
             platform_type=PlatformType.sleeper,
             platform_league_id="lg_acl_2023",
             name="ACL League 2023",
             season=2023,
-            previous_league_id=None,
+            league_group_id=shared_group,
         )
         db_session.add(league_2023)
         await db_session.flush()
@@ -551,7 +551,7 @@ class TestGetLeagueSeasonsAccessControl:
             platform_league_id="lg_acl_2024",
             name="ACL League 2024",
             season=2024,
-            previous_league_id="lg_acl_2023",
+            league_group_id=shared_group,
         )
         db_session.add(league_2024)
         await db_session.flush()
@@ -562,7 +562,7 @@ class TestGetLeagueSeasonsAccessControl:
             platform_league_id="lg_acl_2025",
             name="ACL League 2025",
             season=2025,
-            previous_league_id="lg_acl_2024",
+            league_group_id=shared_group,
         )
         db_session.add(league_2025)
         await db_session.flush()
@@ -582,14 +582,17 @@ class TestGetLeagueSeasonsAccessControl:
         assert response.status_code == 200
         seasons = response.json()["seasons"]
 
-        # Should only return 2024 — walks stop at unlinked 2023 and 2025
-        assert len(seasons) == 1
-        assert seasons[0]["season"] == 2024
+        # With league_group_id, ALL seasons in the group are returned
+        assert len(seasons) == 3
+        season_years = [s["season"] for s in seasons]
+        assert 2023 in season_years
+        assert 2024 in season_years
+        assert 2025 in season_years
 
-    async def test_chain_walk_partial_access(
+    async def test_no_group_id_returns_single_season(
         self, authenticated_client: AsyncClient, db_session
     ):
-        """User linked to head and tail but not middle still gets both ends."""
+        """League without league_group_id returns only itself."""
         user = authenticated_client.test_user  # type: ignore[attr-defined]
 
         league_a = League(
@@ -597,28 +600,11 @@ class TestGetLeagueSeasonsAccessControl:
             platform_league_id="lg_partial_2023",
             name="Partial 2023",
             season=2023,
-            previous_league_id=None,
         )
-        league_b = League(
-            platform_type=PlatformType.sleeper,
-            platform_league_id="lg_partial_2024",
-            name="Partial 2024",
-            season=2024,
-            previous_league_id="lg_partial_2023",
-        )
-        league_c = League(
-            platform_type=PlatformType.sleeper,
-            platform_league_id="lg_partial_2025",
-            name="Partial 2025",
-            season=2025,
-            previous_league_id="lg_partial_2024",
-        )
-        for lg in [league_a, league_b, league_c]:
-            db_session.add(lg)
-            await db_session.flush()
-            await db_session.refresh(lg)
+        db_session.add(league_a)
+        await db_session.flush()
+        await db_session.refresh(league_a)
 
-        # Link user to 2023 only (not 2024 or 2025)
         ul = UserLeague(
             user_id=user.id, league_id=league_a.id,
             platform_team_id="partial_1",
@@ -632,28 +618,28 @@ class TestGetLeagueSeasonsAccessControl:
         assert response.status_code == 200
         seasons = response.json()["seasons"]
 
-        # Backward walk finds nothing (no previous). Forward walk stops at
-        # 2024 (unlinked), so 2025 is also unreachable.
+        # No league_group_id means just this one season
         assert len(seasons) == 1
         assert seasons[0]["season"] == 2023
 
 
 @pytest.mark.asyncio(loop_scope="session")
 class TestListLeaguesLatest:
-    """GET /api/leagues?latest=true — head-of-chain filtering."""
+    """GET /api/leagues?latest=true — DISTINCT ON league_group_id filtering."""
 
-    async def test_latest_returns_head_of_chain(
+    async def test_latest_returns_newest_in_group(
         self, authenticated_client: AsyncClient, db_session
     ):
-        """Only the newest season in each chain is returned."""
+        """Only the newest season in each league group is returned."""
         user = authenticated_client.test_user  # type: ignore[attr-defined]
+        shared_group = uuid.uuid4()
 
         league_old = League(
             platform_type=PlatformType.sleeper,
             platform_league_id="lg_latest_2024",
             name="Latest Chain 2024",
             season=2024,
-            previous_league_id=None,
+            league_group_id=shared_group,
         )
         db_session.add(league_old)
         await db_session.flush()
@@ -664,7 +650,7 @@ class TestListLeaguesLatest:
             platform_league_id="lg_latest_2025",
             name="Latest Chain 2025",
             season=2025,
-            previous_league_id="lg_latest_2024",
+            league_group_id=shared_group,
         )
         db_session.add(league_new)
         await db_session.flush()
@@ -682,24 +668,25 @@ class TestListLeaguesLatest:
         assert response.status_code == 200
         data = response.json()
 
-        # The 2024 league has a successor (2025), so only 2025 should appear
+        # Only 2025 should appear (newest in group)
         returned_ids = [d["platform_league_id"] for d in data]
         assert "lg_latest_2025" in returned_ids
         assert "lg_latest_2024" not in returned_ids
 
-    async def test_latest_cross_platform_no_collision(
+    async def test_latest_cross_platform_separate_groups(
         self, authenticated_client: AsyncClient, db_session
     ):
-        """Same platform_league_id on different platforms doesn't cause filtering."""
+        """Different platform groups are returned independently."""
         user = authenticated_client.test_user  # type: ignore[attr-defined]
+        sleeper_group = uuid.uuid4()
+        mfl_group = uuid.uuid4()
 
-        # Sleeper chain: shared_id (2024) -> shared_id_s (2025)
         sleeper_old = League(
             platform_type=PlatformType.sleeper,
             platform_league_id="shared_id",
             name="Sleeper 2024",
             season=2024,
-            previous_league_id=None,
+            league_group_id=sleeper_group,
         )
         db_session.add(sleeper_old)
         await db_session.flush()
@@ -710,19 +697,18 @@ class TestListLeaguesLatest:
             platform_league_id="shared_id_s",
             name="Sleeper 2025",
             season=2025,
-            previous_league_id="shared_id",
+            league_group_id=sleeper_group,
         )
         db_session.add(sleeper_new)
         await db_session.flush()
         await db_session.refresh(sleeper_new)
 
-        # MFL standalone league with the same platform_league_id as sleeper_old
         mfl_league = League(
             platform_type=PlatformType.mfl,
             platform_league_id="shared_id",
             name="MFL League",
             season=2025,
-            previous_league_id=None,
+            league_group_id=mfl_group,
         )
         db_session.add(mfl_league)
         await db_session.flush()
@@ -741,10 +727,210 @@ class TestListLeaguesLatest:
         data = response.json()
 
         returned = {(d["platform_type"], d["platform_league_id"]) for d in data}
-        # Sleeper 2024 is filtered (has successor), but MFL "shared_id" should remain
-        assert ("sleeper", "shared_id_s") in returned  # sleeper head
+        assert ("sleeper", "shared_id_s") in returned  # sleeper newest
         assert ("mfl", "shared_id") in returned  # mfl standalone
         assert ("sleeper", "shared_id") not in returned  # sleeper old filtered out
+
+
+@pytest.mark.asyncio(loop_scope="session")
+class TestLinkLeagues:
+    """POST /api/leagues/{league_id}/link"""
+
+    async def test_link_leagues_merges_groups(
+        self, authenticated_client: AsyncClient, db_session
+    ):
+        """Linking two leagues merges their league groups."""
+        user = authenticated_client.test_user  # type: ignore[attr-defined]
+        group_a = uuid.uuid4()
+        group_b = uuid.uuid4()
+
+        league_a1 = League(
+            platform_type=PlatformType.sleeper,
+            platform_league_id="lg_link_a1",
+            name="Group A 2024",
+            season=2024,
+            league_group_id=group_a,
+        )
+        league_a2 = League(
+            platform_type=PlatformType.sleeper,
+            platform_league_id="lg_link_a2",
+            name="Group A 2025",
+            season=2025,
+            league_group_id=group_a,
+        )
+        league_b1 = League(
+            platform_type=PlatformType.mfl,
+            platform_league_id="lg_link_b1",
+            name="Group B 2023",
+            season=2023,
+            league_group_id=group_b,
+        )
+
+        for lg in [league_a1, league_a2, league_b1]:
+            db_session.add(lg)
+            await db_session.flush()
+            await db_session.refresh(lg)
+
+        for i, lg in enumerate([league_a1, league_a2, league_b1], start=1):
+            ul = UserLeague(
+                user_id=user.id, league_id=lg.id,
+                platform_team_id=f"link_{i}",
+            )
+            db_session.add(ul)
+        await db_session.commit()
+
+        response = await authenticated_client.post(
+            f"/api/leagues/{league_a1.id}/link",
+            json={"target_league_id": str(league_b1.id)},
+        )
+        assert response.status_code == 200
+        data = response.json()
+
+        # Should return all 3 seasons merged into one group
+        seasons = data["seasons"]
+        assert len(seasons) == 3
+        season_years = sorted([s["season"] for s in seasons], reverse=True)
+        assert season_years == [2025, 2024, 2023]
+
+    async def test_link_leagues_source_no_group(
+        self, authenticated_client: AsyncClient, db_session
+    ):
+        """Source league without league_group_id gets one assigned."""
+        user = authenticated_client.test_user  # type: ignore[attr-defined]
+
+        league_src = League(
+            platform_type=PlatformType.sleeper,
+            platform_league_id="lg_link_nogrp_src",
+            name="No Group Source",
+            season=2024,
+        )
+        league_tgt = League(
+            platform_type=PlatformType.mfl,
+            platform_league_id="lg_link_nogrp_tgt",
+            name="No Group Target",
+            season=2025,
+        )
+
+        for lg in [league_src, league_tgt]:
+            db_session.add(lg)
+            await db_session.flush()
+            await db_session.refresh(lg)
+
+        for i, lg in enumerate([league_src, league_tgt], start=1):
+            ul = UserLeague(
+                user_id=user.id, league_id=lg.id,
+                platform_team_id=f"link_nogrp_{i}",
+            )
+            db_session.add(ul)
+        await db_session.commit()
+
+        response = await authenticated_client.post(
+            f"/api/leagues/{league_src.id}/link",
+            json={"target_league_id": str(league_tgt.id)},
+        )
+        assert response.status_code == 200
+        seasons = response.json()["seasons"]
+        assert len(seasons) == 2
+
+    async def test_link_leagues_not_found(
+        self, authenticated_client: AsyncClient, db_session
+    ):
+        """Linking to a non-existent league returns 404."""
+        user = authenticated_client.test_user  # type: ignore[attr-defined]
+
+        league = League(
+            platform_type=PlatformType.sleeper,
+            platform_league_id="lg_link_404",
+            name="Link 404",
+            season=2025,
+        )
+        db_session.add(league)
+        await db_session.flush()
+        await db_session.refresh(league)
+
+        ul = UserLeague(
+            user_id=user.id, league_id=league.id,
+            platform_team_id="link_404",
+        )
+        db_session.add(ul)
+        await db_session.commit()
+
+        response = await authenticated_client.post(
+            f"/api/leagues/{league.id}/link",
+            json={"target_league_id": str(uuid.uuid4())},
+        )
+        assert response.status_code == 404
+
+    async def test_link_leagues_unauthenticated(self, client: AsyncClient):
+        """Unauthenticated request returns 401."""
+        response = await client.post(
+            f"/api/leagues/{uuid.uuid4()}/link",
+            json={"target_league_id": str(uuid.uuid4())},
+        )
+        assert response.status_code == 401
+
+
+@pytest.mark.asyncio(loop_scope="session")
+class TestUnlinkLeagues:
+    """POST /api/leagues/{league_id}/unlink"""
+
+    async def test_unlink_splits_by_platform(
+        self, authenticated_client: AsyncClient, db_session
+    ):
+        """Unlinking by platform_type splits leagues into separate groups."""
+        user = authenticated_client.test_user  # type: ignore[attr-defined]
+        shared_group = uuid.uuid4()
+
+        sleeper_league = League(
+            platform_type=PlatformType.sleeper,
+            platform_league_id="lg_unlink_sleeper",
+            name="Unlink Sleeper 2025",
+            season=2025,
+            league_group_id=shared_group,
+        )
+        mfl_league = League(
+            platform_type=PlatformType.mfl,
+            platform_league_id="lg_unlink_mfl",
+            name="Unlink MFL 2024",
+            season=2024,
+            league_group_id=shared_group,
+        )
+
+        for lg in [sleeper_league, mfl_league]:
+            db_session.add(lg)
+            await db_session.flush()
+            await db_session.refresh(lg)
+
+        for i, lg in enumerate([sleeper_league, mfl_league], start=1):
+            ul = UserLeague(
+                user_id=user.id, league_id=lg.id,
+                platform_team_id=f"unlink_{i}",
+            )
+            db_session.add(ul)
+        await db_session.commit()
+
+        # Unlink MFL from the group
+        response = await authenticated_client.post(
+            f"/api/leagues/{sleeper_league.id}/unlink",
+            json={"platform_type": "mfl"},
+        )
+        assert response.status_code == 200
+
+        # The response should show the sleeper league's group (just sleeper now)
+        # Since we requested from the sleeper league's perspective, and MFL was split off
+
+        # Verify the groups are now separate
+        await db_session.refresh(sleeper_league)
+        await db_session.refresh(mfl_league)
+        assert sleeper_league.league_group_id != mfl_league.league_group_id
+
+    async def test_unlink_unauthenticated(self, client: AsyncClient):
+        """Unauthenticated request returns 401."""
+        response = await client.post(
+            f"/api/leagues/{uuid.uuid4()}/unlink",
+            json={"platform_type": "mfl"},
+        )
+        assert response.status_code == 401
 
 
 @pytest.mark.asyncio(loop_scope="session")
