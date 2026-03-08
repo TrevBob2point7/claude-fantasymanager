@@ -314,7 +314,8 @@ class TestSyncStandings:
         db_session.add_all([m1, m2])
         await db_session.flush()
 
-        with patch("app.sync.engine.get_adapter"):
+        mock_adapter = _mock_adapter()
+        with patch("app.sync.engine.get_adapter", return_value=mock_adapter):
             engine = SyncEngine(db_session)
             await engine.sync_standings(league, user.id)
 
