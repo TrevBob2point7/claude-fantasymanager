@@ -263,8 +263,18 @@ class SyncEngine:
                     if old_group:
                         group_remap[old_group] = prev_group
 
-            # Apply remaps
+            # Resolve remap chains transitively (union-find style)
+            # e.g. A->B, B->C becomes A->C, B->C
             if group_remap:
+                def resolve(gid: UUID) -> UUID:
+                    seen: set[UUID] = set()
+                    while gid in group_remap and gid not in seen:
+                        seen.add(gid)
+                        gid = group_remap[gid]
+                    return gid
+
+                group_remap = {k: resolve(v) for k, v in group_remap.items()}
+
                 for lg in leagues:
                     if lg.league_group_id in group_remap:
                         lg.league_group_id = group_remap[lg.league_group_id]
