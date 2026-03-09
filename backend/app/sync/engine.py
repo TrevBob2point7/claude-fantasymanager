@@ -925,8 +925,11 @@ class SyncEngine:
         different league ID linked via previous_league_id.
         """
         prev_league_id = league.previous_league_id
+        seen_ids: set[str] = set()
 
-        while prev_league_id:
+        while prev_league_id and prev_league_id not in seen_ids:
+            seen_ids.add(prev_league_id)
+
             result = await self.db.execute(
                 select(League).where(
                     League.platform_type == platform_account.platform_type,

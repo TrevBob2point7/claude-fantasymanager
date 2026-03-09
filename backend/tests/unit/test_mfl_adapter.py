@@ -209,6 +209,52 @@ class TestGetLeagueUsers:
         assert users == []
 
 
+class TestGetHistoryYears:
+    async def test_get_history_years(self):
+        adapter = MFLAdapter(year=YEAR)
+        mock_resp = {
+            "league": {
+                "id": "40750",
+                "history": {
+                    "league": [
+                        {"year": "2024", "url": "..."},
+                        {"year": "2023", "url": "..."},
+                        {"year": "2022", "url": "..."},
+                    ]
+                },
+            }
+        }
+        async with respx.mock:
+            respx.get(_url("/export")).mock(return_value=httpx.Response(200, json=mock_resp))
+            years = await adapter.get_history_years("40750")
+
+        assert years == [2024, 2023, 2022]
+
+    async def test_get_history_years_empty(self):
+        adapter = MFLAdapter(year=YEAR)
+        mock_resp = {"league": {"id": "40750"}}
+        async with respx.mock:
+            respx.get(_url("/export")).mock(return_value=httpx.Response(200, json=mock_resp))
+            years = await adapter.get_history_years("40750")
+
+        assert years == []
+
+    async def test_get_history_years_single(self):
+        """MFL returns a dict instead of list for a single history entry."""
+        adapter = MFLAdapter(year=YEAR)
+        mock_resp = {
+            "league": {
+                "id": "40750",
+                "history": {"league": {"year": "2024"}},
+            }
+        }
+        async with respx.mock:
+            respx.get(_url("/export")).mock(return_value=httpx.Response(200, json=mock_resp))
+            years = await adapter.get_history_years("40750")
+
+        assert years == [2024]
+
+
 class TestGetRosters:
     async def test_get_rosters(self):
         adapter = MFLAdapter(year=YEAR)
@@ -248,6 +294,34 @@ class TestGetRosters:
         assert len(rosters[1].player_ids) == 2
         assert rosters[1].taxi == []
 
+    async def test_taxi_squad_players_in_player_ids(self):
+        """Taxi squad players should appear in both player_ids and taxi list."""
+        adapter = MFLAdapter(year=YEAR)
+        mock_resp = {
+            "rosters": {
+                "franchise": {
+                    "id": "0001",
+                    "player": [
+                        {"id": "14777", "status": "ROSTER"},
+                        {"id": "15331", "status": "TAXI_SQUAD"},
+                        {"id": "16000", "status": "TAXI_SQUAD"},
+                    ],
+                }
+            }
+        }
+        async with respx.mock:
+            respx.get(_url("/export")).mock(return_value=httpx.Response(200, json=mock_resp))
+            rosters = await adapter.get_rosters("40750")
+
+        assert len(rosters) == 1
+        # All 3 players in player_ids
+        assert len(rosters[0].player_ids) == 3
+        assert "14777" in rosters[0].player_ids
+        assert "15331" in rosters[0].player_ids
+        assert "16000" in rosters[0].player_ids
+        # Only taxi players in taxi list
+        assert rosters[0].taxi == ["15331", "16000"]
+
     async def test_get_rosters_empty(self):
         adapter = MFLAdapter(year=YEAR)
         async with respx.mock:
@@ -284,35 +358,43 @@ class TestGetMatchups:
         }
         results_resp = {
             "weeklyResults": {
-                "franchise": [
+                "matchup": [
                     {
-                        "id": "0001",
-                        "score": "120.50",
-                        "starters": "14777,15331",
-                        "player": [
-                            {"id": "14777", "status": "starter", "score": "25.3"},
-                            {"id": "15331", "status": "starter", "score": "18.7"},
+                        "franchise": [
+                            {
+                                "id": "0001",
+                                "score": "120.50",
+                                "starters": "14777,15331",
+                                "player": [
+                                    {"id": "14777", "status": "starter", "score": "25.3"},
+                                    {"id": "15331", "status": "starter", "score": "18.7"},
+                                ],
+                            },
+                            {
+                                "id": "0002",
+                                "score": "98.20",
+                                "starters": "10700",
+                                "player": [
+                                    {"id": "10700", "status": "starter", "score": "30.0"},
+                                ],
+                            },
                         ],
                     },
                     {
-                        "id": "0002",
-                        "score": "98.20",
-                        "starters": "10700",
-                        "player": [
-                            {"id": "10700", "status": "starter", "score": "30.0"},
+                        "franchise": [
+                            {
+                                "id": "0003",
+                                "score": "110.00",
+                                "starters": "",
+                                "player": [],
+                            },
+                            {
+                                "id": "0004",
+                                "score": "105.75",
+                                "starters": "",
+                                "player": [],
+                            },
                         ],
-                    },
-                    {
-                        "id": "0003",
-                        "score": "110.00",
-                        "starters": "",
-                        "player": [],
-                    },
-                    {
-                        "id": "0004",
-                        "score": "105.75",
-                        "starters": "",
-                        "player": [],
                     },
                 ]
             }
@@ -351,6 +433,73 @@ class TestGetMatchups:
         assert team_0001.starters == ["14777", "15331"]
         assert team_0001.starters_points["14777"] == 25.3
         assert team_0001.starters_points["15331"] == 18.7
+
+    async def test_get_matchups_nested_results(self):
+        """weeklyResults nests franchises under matchup[].franchise[], not at top level."""
+        adapter = MFLAdapter(year=YEAR)
+
+        schedule_resp = {
+            "schedule": {
+                "weeklySchedule": {
+                    "week": "1",
+                    "matchup": [
+                        {
+                            "franchise": [
+                                {"id": "0001", "isHome": "1"},
+                                {"id": "0002", "isHome": "0"},
+                            ]
+                        },
+                    ],
+                }
+            }
+        }
+        # weeklyResults with nested matchup[].franchise[] structure
+        results_resp = {
+            "weeklyResults": {
+                "matchup": [
+                    {
+                        "franchise": [
+                            {
+                                "id": "0001",
+                                "score": "110.50",
+                                "starters": "14777",
+                                "player": [
+                                    {"id": "14777", "status": "starter", "score": "22.0"},
+                                ],
+                            },
+                            {
+                                "id": "0002",
+                                "score": "95.00",
+                                "starters": "10700",
+                                "player": [
+                                    {"id": "10700", "status": "starter", "score": "19.5"},
+                                ],
+                            },
+                        ]
+                    }
+                ]
+            }
+        }
+
+        async def mock_handler(request: httpx.Request):
+            params = dict(request.url.params)
+            if params.get("TYPE") == "schedule":
+                return httpx.Response(200, json=schedule_resp)
+            elif params.get("TYPE") == "weeklyResults":
+                return httpx.Response(200, json=results_resp)
+            return httpx.Response(404)
+
+        async with respx.mock:
+            respx.get(_url("/export")).mock(side_effect=mock_handler)
+            matchups = await adapter.get_matchups("40750", 1)
+
+        assert len(matchups) == 2
+        team_0001 = next(m for m in matchups if m.roster_id == "0001")
+        team_0002 = next(m for m in matchups if m.roster_id == "0002")
+        assert team_0001.points == 110.50
+        assert team_0002.points == 95.00
+        assert team_0001.starters == ["14777"]
+        assert team_0001.starters_points["14777"] == 22.0
 
     async def test_get_matchups_empty(self):
         adapter = MFLAdapter(year=YEAR)
@@ -518,6 +667,19 @@ class TestDetectLeagueType:
         adapter = MFLAdapter(year=YEAR)
         assert adapter._detect_league_type({"draftPlayerPool": "Veteran"}) == "dynasty"
 
+    def test_bestball(self):
+        adapter = MFLAdapter(year=YEAR)
+        assert adapter._detect_league_type({"bestLineup": "Yes"}) == "bestball"
+
+    def test_bestball_takes_priority_over_dynasty(self):
+        """bestLineup=Yes should return bestball even with dynasty indicators."""
+        adapter = MFLAdapter(year=YEAR)
+        result = adapter._detect_league_type({
+            "bestLineup": "Yes",
+            "draftPlayerPool": "Rookie",
+        })
+        assert result == "bestball"
+
     def test_keeper(self):
         adapter = MFLAdapter(year=YEAR)
         result = adapter._detect_league_type(
@@ -590,28 +752,30 @@ class TestRateLimiting:
     async def test_rate_limiting_enforces_delay(self):
         """Verify that requests are delayed when called too quickly."""
         adapter = MFLAdapter(year=YEAR)
-        adapter._last_request_time = 0.0
 
         sleep_calls = []
 
         async def mock_sleep(duration):
             sleep_calls.append(duration)
 
-        # Simulate a recent request by setting _last_request_time
+        # Simulate a recent request by setting the class-level timestamp
         with (
             patch("time.monotonic", side_effect=[100.5, 100.5, 101.0]),
             patch("asyncio.sleep", side_effect=mock_sleep),
         ):
-            adapter._last_request_time = 100.0
+            MFLAdapter._global_last_request_time = 100.0
             async with respx.mock:
                 respx.get(_url("/export")).mock(
                     return_value=httpx.Response(200, json={"leagues": {}})
                 )
                 await adapter.get_leagues("testuser", YEAR)
 
-        # Should have slept for the remaining time
+        # Reset class state
+        MFLAdapter._global_last_request_time = 0.0
+
+        # Should have slept for the remaining time (2.0s interval - 0.5s elapsed = 1.5s)
         assert len(sleep_calls) == 1
-        assert sleep_calls[0] == pytest.approx(0.5, abs=0.01)
+        assert sleep_calls[0] == pytest.approx(1.5, abs=0.01)
 
     async def test_no_rate_limit_delay_when_enough_time_elapsed(self):
         """No sleep when enough time has passed since last request."""

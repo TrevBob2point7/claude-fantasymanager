@@ -49,7 +49,7 @@ All enums are defined in `backend/app/models/enums.py` and stored as PostgreSQL 
 | `PlayerStatus` | `playerstatus` | `active`, `injured_reserve`, `out`, `questionable`, `doubtful`, `suspended` |
 | `TransactionType` | `transactiontype` | `add`, `drop`, `trade`, `waiver` |
 | `SyncStatus` | `syncstatus` | `pending`, `in_progress`, `completed`, `failed` |
-| `LeagueType` | `leaguetype` | `redraft`, `keeper`, `dynasty` |
+| `LeagueType` | `leaguetype` | `redraft`, `keeper`, `dynasty`, `bestball` |
 | `ADPFormat` | `adpformat` | `standard`, `half_ppr`, `ppr`, `superflex`, `dynasty`, `two_qb` |
 | `DataType` | `datatype` | `leagues`, `rosters`, `matchups`, `standings`, `players`, `transactions` |
 
@@ -128,7 +128,7 @@ League metadata synced from platforms.
 | `roster_size` | INTEGER | YES | — | |
 | `scoring_type` | `scoringtype` | YES | — | |
 | `league_type` | `leaguetype` | YES | — | |
-| `settings_json` | JSON | YES | — | Raw platform settings blob |
+| `settings_json` | JSON | YES | — | Platform settings. Common keys: `roster_positions` (list of slot labels), `user_franchise_id` (MFL owner franchise ID), `endWeek`, `lastRegularSeasonWeek`, `leg` (Sleeper current week) |
 | `previous_league_id` | VARCHAR(100) | YES | — | Platform's league ID for the prior season (used to chain seasons together) |
 | `league_group_id` | UUID | YES | — | Groups related seasons across platforms. Indexed. |
 | `created_at` | TIMESTAMPTZ | NO | `now()` | |
@@ -137,7 +137,7 @@ League metadata synced from platforms.
 **Unique constraint:** `(platform_type, platform_league_id, season)`
 **Relationships:** `user_leagues`, `standings`, `matchups`, `player_scores`, `projected_scores`, `transactions`
 
-**Season chaining:** Sleeper (and potentially other platforms) assign different `platform_league_id` values to each season of the same logical league. The `previous_league_id` field stores the platform's league ID for the prior season, forming a linked list: `2025 → 2024 → 2023 → null`. The `league_group_id` is the primary grouping mechanism — all seasons of the same logical league share the same UUID, enabling efficient queries for the League Detail season selector and Dashboard deduplication. The `previous_league_id` chain is still used during sync to discover and link historical seasons.
+**Season chaining:** Platforms handle multi-season leagues differently. Sleeper assigns a different `platform_league_id` per season, linked via `previous_league_id` (e.g. `lg_2025 → lg_2024 → lg_2023 → null`). MFL reuses the same `platform_league_id` across years and provides a history API listing all past years. The `league_group_id` is the primary grouping mechanism — all seasons of the same logical league share the same UUID, enabling Dashboard deduplication and the League Detail season selector. During sync, historical seasons are discovered via `previous_league_id` chains (Sleeper) or history entries (MFL).
 
 ---
 
@@ -169,7 +169,7 @@ Player roster assignments per user-league.
 | `id` | UUID | NO | `gen_random_uuid()` | PK |
 | `user_league_id` | UUID | NO | — | FK → `user_leagues.id` |
 | `player_id` | UUID | NO | — | FK → `players.id` |
-| `slot` | VARCHAR(20) | YES | — | e.g. QB, RB, FLEX, BENCH, TAXI, IR |
+| `slot` | VARCHAR(20) | YES | — | e.g. QB, RB, FLEX, BENCH, TAXI, IR. TAXI is used for dynasty/keeper taxi squad players. |
 | `acquired_date` | DATE | YES | — | |
 | `created_at` | TIMESTAMPTZ | NO | `now()` | |
 | `updated_at` | TIMESTAMPTZ | NO | `now()` | Auto-updated |

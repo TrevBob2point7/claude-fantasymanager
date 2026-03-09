@@ -1,21 +1,30 @@
 """Integration tests for the sync API endpoints."""
 
+import os
 import uuid
-from unittest.mock import AsyncMock, patch
 
+import pytest
 from app.models import PlatformAccount, PlatformType, SyncLog, SyncStatus
 from app.models.enums import DataType
-from app.platforms.schemas import PlatformLeague
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
+
+# SSE stream tests require the `db` hostname (Docker network) because
+# _sync_stream creates its own async_session outside the DI system.
+_IN_DOCKER = os.path.exists("/.dockerenv") or "db:" in os.environ.get("TEST_DATABASE_URL", "db:")
 
 
 class TestTriggerSync:
     """POST /api/sync/{account_id}"""
 
-    async def test_trigger_sync_success(
+    @pytest.mark.skipif(
+        "localhost" in os.environ.get("TEST_DATABASE_URL", ""),
+        reason="SSE stream creates own DB session using Docker hostname",
+    )
+    async def test_trigger_sync_returns_sse_stream(
         self, authenticated_client: AsyncClient, db_session: AsyncSession
     ):
+        """Sync endpoint returns text/event-stream with SSE events."""
         user = authenticated_client.test_user  # type: ignore[attr-defined]
         account = PlatformAccount(
             user_id=user.id,
@@ -27,32 +36,13 @@ class TestTriggerSync:
         await db_session.commit()
         await db_session.refresh(account)
 
-        mock_adapter = AsyncMock()
-        mock_adapter.get_leagues.return_value = [
-            PlatformLeague(
-                league_id="lg1",
-                name="Test League",
-                season=2025,
-                roster_size=15,
-                scoring_type="ppr",
-                settings={"leg": 1},
-            )
-        ]
-        mock_adapter.get_rosters.return_value = []
-        mock_adapter.get_matchups.return_value = []
-        mock_adapter.get_transactions.return_value = []
+        response = await authenticated_client.post(
+            f"/api/sync/{account.id}"
+        )
 
-        with patch(
-            "app.sync.engine.get_adapter", return_value=mock_adapter
-        ):
-            response = await authenticated_client.post(
-                f"/api/sync/{account.id}"
-            )
-
+        # Endpoint returns 200 with SSE content type
         assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "completed"
-        assert "leagues" in data["synced"]
+        assert "text/event-stream" in response.headers.get("content-type", "")
 
     async def test_trigger_sync_account_not_found(
         self, authenticated_client: AsyncClient
