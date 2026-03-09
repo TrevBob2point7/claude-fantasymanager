@@ -32,7 +32,7 @@ export async function triggerSync(
     }
 
     const reader = resp.body?.getReader();
-    if (!reader) return;
+    if (!reader) throw new Error("Sync response stream not available");
 
     const decoder = new TextDecoder();
     let buffer = "";
