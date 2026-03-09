@@ -118,6 +118,7 @@ class SyncEngine:
             adapter = get_adapter(
                 platform_account.platform_type,
                 credentials_json=platform_account.credentials_json,
+                year=season,
             )
 
             platform_user_id = platform_account.platform_user_id
