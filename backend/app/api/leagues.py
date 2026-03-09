@@ -583,13 +583,18 @@ async def get_matchup_summary(
     cached = result.scalars().all()
     cached_weeks = {m.week for m in cached}
 
-    # Determine which weeks need fetching — finished seasons are cache-only
+    # Determine which weeks need fetching
+    # Finished seasons with cached data are cache-only; if nothing cached, do initial fetch
     weeks_to_fetch: list[int] = []
-    if not season_finished:
-        for w in range(1, min(cur_week + 1, 19)):
+    if season_finished and cached:
+        pass  # fully cached — skip fetch
+    else:
+        end_week = int((league.settings_json or {}).get("endWeek", 0) or 0) or 17
+        week_range = range(1, end_week + 1) if season_finished else range(1, min(cur_week + 1, 19))
+        for w in week_range:
             if w not in cached_weeks:
                 weeks_to_fetch.append(w)
-            elif w == cur_week:
+            elif not season_finished and w == cur_week:
                 # Current week may have updated scores — re-fetch
                 weeks_to_fetch.append(w)
 
@@ -668,8 +673,8 @@ async def get_matchup_detail(
     )
     cached = result.scalars().all()
 
-    # Fetch if active season and (missing or current/future week)
-    needs_fetch = not season_finished and (not cached or week >= cur_week)
+    # Fetch if missing (even finished seasons) or active season current/future week
+    needs_fetch = not cached or (not season_finished and week >= cur_week)
     if needs_fetch:
         adapter = get_adapter(
             account.platform_type,
@@ -751,13 +756,12 @@ async def get_league_transactions(
     result = await db.execute(tx_query.options(selectinload(Transaction.player)))
     cached = result.scalars().all()
 
-    # Determine if we need to fetch — finished seasons are cache-only
+    # Fetch if missing (even finished seasons) or active season current/future week
     needs_fetch = False
-    if not season_finished:
-        if week is not None:
-            if not cached or week >= cur_week:
-                needs_fetch = True
-        elif not cached:
+    if not cached:
+        needs_fetch = True
+    elif not season_finished:
+        if week is not None and week >= cur_week:
             needs_fetch = True
 
     if needs_fetch:
@@ -771,7 +775,13 @@ async def get_league_transactions(
             players_map = await adapter.get_players_map()
 
         engine = SyncEngine(db)
-        weeks_to_fetch = [week] if week else list(range(1, min(cur_week + 1, 19)))
+        end_week = int((league.settings_json or {}).get("endWeek", 0) or 0) or 17
+        if week:
+            weeks_to_fetch = [week]
+        elif season_finished:
+            weeks_to_fetch = list(range(1, end_week + 1))
+        else:
+            weeks_to_fetch = list(range(1, min(cur_week + 1, 19)))
         for w in weeks_to_fetch:
             try:
                 await engine.sync_transactions(

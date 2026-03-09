@@ -566,6 +566,11 @@ class SyncEngine:
                 if not home_ul or not away_ul:
                     continue
 
+                # Skip phantom playoff matchups (projected pairings with no scores)
+                playoff_round = _get_playoff_round(league, week)
+                if playoff_round and home.points is None and away.points is None:
+                    continue
+
                 home_starters = self._build_starters_json(
                     home,
                     players_map,
@@ -596,7 +601,6 @@ class SyncEngine:
                         ),
                     )
                 )
-                playoff_round = _get_playoff_round(league, week)
 
                 matchup = existing.scalar_one_or_none()
                 if matchup:

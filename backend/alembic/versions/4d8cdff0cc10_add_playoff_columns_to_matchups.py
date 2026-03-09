@@ -1,7 +1,7 @@
 """add playoff columns to matchups
 
-Revision ID: a1b2c3d4e5f6
-Revises: 01cbebd14999
+Revision ID: 4d8cdff0cc10
+Revises: cbf3e746c1d7
 Create Date: 2026-03-09 12:00:00.000000
 
 """
@@ -11,8 +11,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "a1b2c3d4e5f6"
-down_revision: str | None = "01cbebd14999"
+revision: str = "4d8cdff0cc10"
+down_revision: str | None = "cbf3e746c1d7"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

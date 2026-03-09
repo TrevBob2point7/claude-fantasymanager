@@ -1040,7 +1040,7 @@ function LazyMatchupsTab({ leagueId, teamName }: { leagueId: string; teamName: s
   }
 
   const maxPlayoffRound = Math.max(
-    ...userMatchups.filter((m) => m.playoff_round != null).map((m) => m.playoff_round!),
+    ...summaries.filter((m) => m.playoff_round != null).map((m) => m.playoff_round!),
     0,
   );
 
