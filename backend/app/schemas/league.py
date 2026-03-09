@@ -81,6 +81,8 @@ class MatchupRead(BaseModel):
     is_user_matchup: bool = False
     home_starters: list[MatchupPlayerRead] | None = None
     away_starters: list[MatchupPlayerRead] | None = None
+    playoff_round: int | None = None
+    is_consolation: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -105,6 +107,8 @@ class MatchupSummaryRead(BaseModel):
     home_score: Decimal | None
     away_score: Decimal | None
     is_user_matchup: bool = False
+    playoff_round: int | None = None
+    is_consolation: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 

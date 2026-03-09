@@ -266,6 +266,8 @@ async def get_league_detail(
             away_starters=[
                 MatchupPlayerRead(**p) for p in m.away_starters_json
             ] if m.away_starters_json else None,
+            playoff_round=m.playoff_round,
+            is_consolation=m.is_consolation,
         )
         for m in matchups_raw
     ]
@@ -635,6 +637,8 @@ async def get_matchup_summary(
                 m.home_user_league_id == user_league.id
                 or m.away_user_league_id == user_league.id
             ),
+            playoff_round=m.playoff_round,
+            is_consolation=m.is_consolation,
         )
         for m in cached
     ]
@@ -713,6 +717,8 @@ async def get_matchup_detail(
             away_starters=[
                 MatchupPlayerRead(**p) for p in m.away_starters_json
             ] if m.away_starters_json else None,
+            playoff_round=m.playoff_round,
+            is_consolation=m.is_consolation,
         )
         for m in cached
     ]
