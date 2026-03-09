@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from app.models.enums import PlatformType
 from app.sync.engine import _get_playoff_round
 
@@ -16,7 +14,7 @@ def _make_league(
     league = MagicMock()
     league.platform_type = platform_type
     league.league_type = league_type
-    league.settings_json = settings_json or {}
+    league.settings_json = settings_json
     return league
 
 
