@@ -554,6 +554,8 @@ class SyncEngine:
             for m in platform_matchups:
                 groups.setdefault(m.matchup_id, []).append(m)
 
+            playoff_round = _get_playoff_round(league, week)
+
             for _matchup_id, entries in groups.items():
                 if len(entries) < 2:
                     continue
@@ -567,7 +569,6 @@ class SyncEngine:
                     continue
 
                 # Skip phantom playoff matchups (projected pairings with no scores)
-                playoff_round = _get_playoff_round(league, week)
                 if playoff_round and home.points is None and away.points is None:
                     continue
 
