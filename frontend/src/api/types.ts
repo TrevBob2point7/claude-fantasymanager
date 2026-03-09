@@ -118,6 +118,7 @@ export interface LeagueDetail extends League {
   recent_matchups: Matchup[];
   recent_transactions: Transaction[];
   current_week: number | null;
+  champion_team_name: string | null;
 }
 
 export interface MatchupSummary {

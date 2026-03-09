@@ -128,7 +128,7 @@ League metadata synced from platforms.
 | `roster_size` | INTEGER | YES | — | |
 | `scoring_type` | `scoringtype` | YES | — | |
 | `league_type` | `leaguetype` | YES | — | |
-| `settings_json` | JSON | YES | — | Platform settings. Common keys: `roster_positions` (list of slot labels), `user_franchise_id` (MFL owner franchise ID), `endWeek`, `lastRegularSeasonWeek`, `leg` (Sleeper current week) |
+| `settings_json` | JSON | YES | — | Platform settings. Common keys: `roster_positions` (list of slot labels), `user_franchise_id` (MFL owner franchise ID), `endWeek`, `lastRegularSeasonWeek`, `leg` (Sleeper current week), `bracket_data` (object with `champion_franchise_id` and `consolation_franchise_ids`) |
 | `previous_league_id` | VARCHAR(100) | YES | — | Platform's league ID for the prior season (used to chain seasons together) |
 | `league_group_id` | UUID | YES | — | Groups related seasons across platforms. Indexed. |
 | `created_at` | TIMESTAMPTZ | NO | `now()` | |

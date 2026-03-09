@@ -244,9 +244,10 @@ async def get_league_detail(
     )
     matchups_raw = result.scalars().all()
 
-    # Get user_league names for matchup display
+    # Get user_league names for matchup display and champion lookup
     result = await db.execute(select(UserLeague).where(UserLeague.league_id == league_id))
-    all_uls = {ul.id: ul.team_name for ul in result.scalars().all()}
+    all_uls_list = result.scalars().all()
+    all_uls = {ul.id: ul.team_name for ul in all_uls_list}
 
     recent_matchups = [
         MatchupRead(
@@ -298,6 +299,16 @@ async def get_league_detail(
         league.settings_json.get("leg") if league.settings_json else None
     )
 
+    # Resolve champion team name from stored bracket data
+    champion_team_name: str | None = None
+    bracket_data = (league.settings_json or {}).get("bracket_data", {})
+    champion_fid = bracket_data.get("champion_franchise_id")
+    if champion_fid:
+        for ul in all_uls_list:
+            if ul.platform_team_id == champion_fid:
+                champion_team_name = ul.team_name
+                break
+
     return LeagueDetailRead(
         id=league.id,
         platform_type=league.platform_type,
@@ -309,6 +320,7 @@ async def get_league_detail(
         league_type=league.league_type,
         team_name=team_name,
         current_week=current_week,
+        champion_team_name=champion_team_name,
         created_at=league.created_at,
         standings=standings,
         roster=roster_entries,
@@ -584,19 +596,15 @@ async def get_matchup_summary(
     cached_weeks = {m.week for m in cached}
 
     # Determine which weeks need fetching
-    # Finished seasons with cached data are cache-only; if nothing cached, do initial fetch
     weeks_to_fetch: list[int] = []
-    if season_finished and cached:
-        pass  # fully cached — skip fetch
-    else:
-        end_week = int((league.settings_json or {}).get("endWeek", 0) or 0) or 17
-        week_range = range(1, end_week + 1) if season_finished else range(1, min(cur_week + 1, 19))
-        for w in week_range:
-            if w not in cached_weeks:
-                weeks_to_fetch.append(w)
-            elif not season_finished and w == cur_week:
-                # Current week may have updated scores — re-fetch
-                weeks_to_fetch.append(w)
+    end_week = int((league.settings_json or {}).get("endWeek", 0) or 0) or 17
+    week_range = range(1, end_week + 1) if season_finished else range(1, min(cur_week + 1, 19))
+    for w in week_range:
+        if w not in cached_weeks:
+            weeks_to_fetch.append(w)
+        elif not season_finished and w == cur_week:
+            # Current week may have updated scores — re-fetch
+            weeks_to_fetch.append(w)
 
     if weeks_to_fetch:
         adapter = get_adapter(

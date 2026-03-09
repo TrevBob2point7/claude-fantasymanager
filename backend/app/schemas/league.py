@@ -142,6 +142,7 @@ class LeagueDetailRead(BaseModel):
     league_type: LeagueType | None = None
     team_name: str | None = None
     current_week: int | None = None
+    champion_team_name: str | None = None
     created_at: datetime
     standings: list[StandingRead]
     roster: list[RosterEntryRead]
