@@ -581,14 +581,15 @@ async def get_matchup_summary(
     cached = result.scalars().all()
     cached_weeks = {m.week for m in cached}
 
-    # Determine which weeks need fetching
+    # Determine which weeks need fetching — finished seasons are cache-only
     weeks_to_fetch: list[int] = []
-    for w in range(1, min(cur_week + 1, 19)):
-        if w not in cached_weeks:
-            weeks_to_fetch.append(w)
-        elif w == cur_week and not season_finished:
-            # Current week may have updated scores — re-fetch
-            weeks_to_fetch.append(w)
+    if not season_finished:
+        for w in range(1, min(cur_week + 1, 19)):
+            if w not in cached_weeks:
+                weeks_to_fetch.append(w)
+            elif w == cur_week:
+                # Current week may have updated scores — re-fetch
+                weeks_to_fetch.append(w)
 
     if weeks_to_fetch:
         adapter = get_adapter(
@@ -663,8 +664,8 @@ async def get_matchup_detail(
     )
     cached = result.scalars().all()
 
-    # Fetch if missing, or current/future week in an active season
-    needs_fetch = not cached or (week >= cur_week and not season_finished)
+    # Fetch if active season and (missing or current/future week)
+    needs_fetch = not season_finished and (not cached or week >= cur_week)
     if needs_fetch:
         adapter = get_adapter(
             account.platform_type,
@@ -744,13 +745,14 @@ async def get_league_transactions(
     result = await db.execute(tx_query.options(selectinload(Transaction.player)))
     cached = result.scalars().all()
 
-    # Determine if we need to fetch
+    # Determine if we need to fetch — finished seasons are cache-only
     needs_fetch = False
-    if week is not None:
-        if not cached or (week >= cur_week and not season_finished):
+    if not season_finished:
+        if week is not None:
+            if not cached or week >= cur_week:
+                needs_fetch = True
+        elif not cached:
             needs_fetch = True
-    elif not cached:
-        needs_fetch = True
 
     if needs_fetch:
         adapter = get_adapter(
