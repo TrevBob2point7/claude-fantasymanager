@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { getLeagueDetail, getLeagueSeasons, linkLeagues, unlinkLeagues, getMatchupSummary, getMatchupDetail, getLeagueTransactions } from "../api/leagues";
 import { triggerLeagueSync, type SyncEvent } from "../api/sync";
@@ -989,6 +989,7 @@ function LazyMatchupsTab({ leagueId, teamName }: { leagueId: string; teamName: s
   const [expandedWeek, setExpandedWeek] = useState<number | null>(null);
   const [weekDetail, setWeekDetail] = useState<Matchup[] | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const expandRequestId = useRef(0);
 
   useEffect(() => {
     setLoading(true);
@@ -1004,15 +1005,20 @@ function LazyMatchupsTab({ leagueId, teamName }: { leagueId: string; teamName: s
       setWeekDetail(null);
       return;
     }
+    const requestId = ++expandRequestId.current;
     setExpandedWeek(week);
     setDetailLoading(true);
     try {
       const detail = await getMatchupDetail(leagueId, week);
+      if (expandRequestId.current !== requestId) return; // stale request
       setWeekDetail(detail);
     } catch {
+      if (expandRequestId.current !== requestId) return;
       setWeekDetail(null);
     } finally {
-      setDetailLoading(false);
+      if (expandRequestId.current === requestId) {
+        setDetailLoading(false);
+      }
     }
   };
 
