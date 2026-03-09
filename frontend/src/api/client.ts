@@ -31,8 +31,8 @@ async function request<T>(
       if (path === "/auth/login") {
         throw new Error("Invalid email or password");
       }
-      // Don't treat platform login failures as session expiry
-      if (!path.startsWith("/platforms/accounts/")) {
+      // Don't treat MFL login failures as session expiry
+      if (path !== "/platforms/accounts/mfl/login") {
         const hadToken = !!token;
         localStorage.removeItem("token");
         if (hadToken) {

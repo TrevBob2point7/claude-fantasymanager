@@ -61,16 +61,9 @@ class MFLAdapter(PlatformAdapter):
         self.year = year or _current_nfl_season()
         self._credentials = credentials_json or {}
         self.cookie = self._credentials.get("cookie")
-        self._client: httpx.AsyncClient | None = None
         # Per-league caches to avoid redundant API calls across weeks
         self._schedule_cache: dict[str, dict[int, list]] = {}  # league_id -> {week: matchups_raw}
         self._transactions_cache: dict[str, list] = {}  # league_id -> all raw transactions
-
-    async def _get_client(self) -> httpx.AsyncClient:
-        """Get or create a persistent HTTP client."""
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(timeout=_CLIENT_TIMEOUT, follow_redirects=True)
-        return self._client
 
     async def _request(
         self,
@@ -98,8 +91,10 @@ class MFLAdapter(PlatformAdapter):
                     await asyncio.sleep(_RATE_LIMIT_INTERVAL - elapsed)
                 MFLAdapter._global_last_request_time = time.monotonic()
 
-            client = await self._get_client()
-            resp = await client.request(method, url, params=params, headers=headers)
+            async with httpx.AsyncClient(
+                timeout=_CLIENT_TIMEOUT, follow_redirects=True
+            ) as client:
+                resp = await client.request(method, url, params=params, headers=headers)
 
             if resp.status_code == 429 and attempt < _MAX_RETRIES:
                 wait = 3 * (2 ** attempt)  # 3s, 6s, 12s, 24s, 48s
@@ -155,12 +150,14 @@ class MFLAdapter(PlatformAdapter):
         url = f"{self.BASE_URL}/{self.year}/login"
         password = self._credentials.get("password", "")
 
-        client = await self._get_client()
-        resp = await client.post(
-            url,
-            data={"USERNAME": username, "PASSWORD": password, "XML": "1"},
-        )
-        resp.raise_for_status()
+        async with httpx.AsyncClient(
+            timeout=_CLIENT_TIMEOUT, follow_redirects=True
+        ) as client:
+            resp = await client.post(
+                url,
+                data={"USERNAME": username, "PASSWORD": password, "XML": "1"},
+            )
+            resp.raise_for_status()
 
         # Response is XML: <status MFL_USER_ID="...">OK</status>
         # or <error>message</error> on failure
