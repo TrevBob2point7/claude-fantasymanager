@@ -79,8 +79,15 @@ class MFLAdapter(PlatformAdapter):
         url = f"{self.BASE_URL}/{effective_year}{path}"
 
         headers: dict[str, str] = {}
+        auth_cookies: httpx.Cookies | None = None
         if use_auth and self.cookie:
-            headers["Cookie"] = self.cookie
+            # Set cookies on client instance so httpx forwards them on redirects
+            auth_cookies = httpx.Cookies()
+            for part in self.cookie.split(";"):
+                part = part.strip()
+                if "=" in part:
+                    k, v = part.split("=", 1)
+                    auth_cookies.set(k.strip(), v.strip(), domain=".myfantasyleague.com")
 
         for attempt in range(_MAX_RETRIES + 1):
             # Enforce rate limit with class-level lock
@@ -92,7 +99,8 @@ class MFLAdapter(PlatformAdapter):
                 MFLAdapter._global_last_request_time = time.monotonic()
 
             async with httpx.AsyncClient(
-                timeout=_CLIENT_TIMEOUT, follow_redirects=True
+                timeout=_CLIENT_TIMEOUT, follow_redirects=True,
+                cookies=auth_cookies,
             ) as client:
                 resp = await client.request(method, url, params=params, headers=headers)
 
@@ -330,7 +338,7 @@ class MFLAdapter(PlatformAdapter):
         """Get schedule pairings for a specific week, fetching all weeks on first call."""
         if league_id not in self._schedule_cache:
             # Fetch full schedule (all weeks) in one API call
-            sched_data = await self._api_get("schedule", params={"L": league_id})
+            sched_data = await self._api_get("schedule", params={"L": league_id}, use_auth=True)
             schedule = sched_data.get("schedule") or {}
             weekly_schedules = schedule.get("weeklySchedule") or {}
             weekly_list = _ensure_list(weekly_schedules)
@@ -361,49 +369,52 @@ class MFLAdapter(PlatformAdapter):
                     franchise_matchup_map[fid] = idx
 
         # Fetch weekly results for starters and scores
-        results_data = await self._api_get("weeklyResults", params={"L": league_id, "W": str(week)})
+        results_data = await self._api_get("weeklyResults", params={"L": league_id, "W": str(week)}, use_auth=True)
         weekly_results = results_data.get("weeklyResults") or {}
-        # weeklyResults contains matchup[] -> franchise[] (not franchise at top level)
+        # weeklyResults may contain matchup[] -> franchise[] or franchise[] at top level
         result_matchups = _ensure_list(weekly_results.get("matchup"))
-        result_franchises: list[dict] = []
-        for rm in result_matchups:
-            result_franchises.extend(_ensure_list(rm.get("franchise")))
+
+        # Fallback: some older MFL seasons return franchise[] directly under weeklyResults
+        if not result_matchups and weekly_results.get("franchise"):
+            result_matchups = [{"franchise": weekly_results["franchise"]}]
 
         results: list[PlatformMatchup] = []
-        for franchise in result_franchises:
-            franchise_id = str(franchise.get("id", ""))
+        for rm_idx, rm in enumerate(result_matchups):
+            for franchise in _ensure_list(rm.get("franchise")):
+                franchise_id = str(franchise.get("id", ""))
 
-            # Parse total points
-            points_raw = franchise.get("score")
-            points = float(points_raw) if points_raw else None
+                # Parse total points
+                points_raw = franchise.get("score")
+                points = float(points_raw) if points_raw else None
 
-            # Parse starters from comma-separated string
-            starters_str = franchise.get("starters", "")
-            starters = [s for s in starters_str.split(",") if s] if starters_str else []
+                # Parse starters from comma-separated string
+                starters_str = franchise.get("starters", "")
+                starters = [s for s in starters_str.split(",") if s] if starters_str else []
 
-            # Parse individual player scores
-            players = _ensure_list(franchise.get("player"))
-            starters_points: dict[str, float] = {}
-            for p in players:
-                pid = str(p.get("id", ""))
-                p_status = p.get("status", "")
-                p_score = p.get("score")
-                if pid and p_status == "starter" and p_score is not None:
-                    with contextlib.suppress(ValueError, TypeError):
-                        starters_points[pid] = float(p_score)
+                # Parse individual player scores
+                players = _ensure_list(franchise.get("player"))
+                starters_points: dict[str, float] = {}
+                for p in players:
+                    pid = str(p.get("id", ""))
+                    p_status = p.get("status", "")
+                    p_score = p.get("score")
+                    if pid and p_status == "starter" and p_score is not None:
+                        with contextlib.suppress(ValueError, TypeError):
+                            starters_points[pid] = float(p_score)
 
-            matchup_id = franchise_matchup_map.get(franchise_id, 0)
+                # Use schedule-based matchup_id if available, else weeklyResults grouping
+                matchup_id = franchise_matchup_map.get(franchise_id, rm_idx)
 
-            results.append(
-                PlatformMatchup(
-                    matchup_id=matchup_id,
-                    roster_id=franchise_id,
-                    points=points,
-                    week=week,
-                    starters=starters,
-                    starters_points=starters_points,
+                results.append(
+                    PlatformMatchup(
+                        matchup_id=matchup_id,
+                        roster_id=franchise_id,
+                        points=points,
+                        week=week,
+                        starters=starters,
+                        starters_points=starters_points,
+                    )
                 )
-            )
         return results
 
     async def get_transactions(self, league_id: str, week: int) -> list[PlatformTransaction]:
@@ -470,6 +481,47 @@ class MFLAdapter(PlatformAdapter):
                 )
 
         return results
+
+    async def get_winners_bracket(self, league_id: str) -> list[dict]:
+        """Get the championship bracket detail as a list of round dicts."""
+        brackets = await self._get_playoff_brackets(league_id)
+        if not brackets:
+            return []
+        # Championship bracket = most teams involved
+        champ = max(brackets, key=lambda b: int(b.get("teamsInvolved", 0)))
+        detail = await self._get_playoff_bracket(league_id, champ["id"])
+        return _ensure_list(detail.get("playoffRound", []))
+
+    async def get_losers_bracket(self, league_id: str) -> list[dict]:
+        """Get consolation bracket rounds with game details.
+
+        Returns a list of round dicts (same format as winners bracket rounds)
+        from all non-championship brackets combined.
+        """
+        brackets = await self._get_playoff_brackets(league_id)
+        if len(brackets) <= 1:
+            return []
+        champ_id = max(brackets, key=lambda b: int(b.get("teamsInvolved", 0)))["id"]
+        consolation_rounds: list[dict] = []
+        for bracket in brackets:
+            if bracket["id"] == champ_id:
+                continue
+            detail = await self._get_playoff_bracket(league_id, bracket["id"])
+            consolation_rounds.extend(_ensure_list(detail.get("playoffRound", [])))
+        return consolation_rounds
+
+    async def _get_playoff_brackets(self, league_id: str) -> list[dict]:
+        """Fetch all playoff bracket summaries for a league."""
+        data = await self._api_get("playoffBrackets", params={"L": league_id}, use_auth=True)
+        brackets = data.get("playoffBrackets", {}).get("playoffBracket", [])
+        return _ensure_list(brackets)
+
+    async def _get_playoff_bracket(self, league_id: str, bracket_id: str) -> dict:
+        """Fetch detailed bracket with rounds and game results."""
+        data = await self._api_get(
+            "playoffBracket", params={"L": league_id, "BRACKET_ID": bracket_id}, use_auth=True
+        )
+        return data.get("playoffBracket", {})
 
     async def get_standings(self, league_id: str) -> list[PlatformStanding] | None:
         """Fetch league standings from MFL."""
