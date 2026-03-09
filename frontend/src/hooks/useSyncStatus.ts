@@ -1,29 +1,34 @@
 import { useState, useCallback } from "react";
 import { triggerSync } from "../api/sync";
-import type { SyncResult } from "../api/types";
+import type { SyncEvent } from "../api/sync";
 
 export function useSyncStatus() {
   const [syncing, setSyncing] = useState(false);
-  const [result, setResult] = useState<SyncResult | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const sync = useCallback(async (accountId: string) => {
     setSyncing(true);
     setError(null);
-    setResult(null);
+    setMessage(null);
     try {
-      const data = await triggerSync(accountId);
-      setResult(data);
-      return data;
+      await triggerSync(accountId, (event: SyncEvent) => {
+        if (event.type === "progress") {
+          setMessage(event.message ?? "Syncing...");
+        } else if (event.type === "done") {
+          setMessage("Sync complete");
+        } else if (event.type === "error") {
+          setError(event.message ?? "Sync failed");
+        }
+      });
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Sync failed";
-      setError(message);
+      const msg = err instanceof Error ? err.message : "Sync failed";
+      setError(msg);
       throw err;
     } finally {
       setSyncing(false);
     }
   }, []);
 
-  return { syncing, result, error, sync };
+  return { syncing, message, error, sync };
 }

@@ -3,7 +3,6 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from app.models.team_bye_week import TeamByeWeek
 from app.sync.bye_weeks import sync_bye_weeks
 from sqlalchemy import select

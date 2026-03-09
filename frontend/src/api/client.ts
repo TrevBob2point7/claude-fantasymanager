@@ -28,13 +28,16 @@ async function request<T>(
     }
 
     if (res.status === 401) {
-      const hadToken = !!token;
-      localStorage.removeItem("token");
-      if (hadToken) {
-        window.location.href = "/login";
-      }
       if (path === "/auth/login") {
         throw new Error("Invalid email or password");
+      }
+      // Don't treat MFL login failures as session expiry
+      if (path !== "/platforms/accounts/mfl/login") {
+        const hadToken = !!token;
+        localStorage.removeItem("token");
+        if (hadToken) {
+          window.location.href = "/login";
+        }
       }
     }
 

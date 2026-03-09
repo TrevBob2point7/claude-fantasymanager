@@ -33,10 +33,44 @@ All four types are actively played and must be supported:
 | **Dynasty** | Keep entire roster year-over-year, rookie drafts, taxi squads | `settings.type: 2` |
 | **Guillotine** | Lowest-scoring team each week is eliminated, roster goes to waivers | `settings.type: 3` |
 
-**Best Ball** is a modifier, not a league type. Any league type can have best ball enabled (`settings.best_ball: 1`), which auto-optimizes lineups each week with no manual management.
-**NOTE:** Best ball might not be a modifier for the other platforms. The modifier is sleeper specific. Confirm how this works as other league support is added.
+**Best Ball** handling differs across platforms:
+- **Sleeper**: Best ball is a modifier (`settings.best_ball: 1`) that can be applied to any league type.
+- **MFL**: Best ball is a distinct league type, detected via `bestLineup=Yes` in league settings. Stored as `LeagueType.bestball` in the database.
 
 Sleeper also exposes guillotine-specific fields like `settings.last_chopped_leg` (last week a team was eliminated).
+
+---
+
+## Sync Architecture
+
+Sync uses **Server-Sent Events (SSE)** to stream real-time progress to the frontend. Two endpoints:
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/sync/{account_id}?season={year}` | Sync all leagues for a platform account and season |
+| `POST /api/sync/league/{league_id}` | Sync a single league: metadata refresh, rosters, standings, and historical season discovery |
+
+### Data fetching strategy
+
+| Data | When fetched |
+|------|-------------|
+| League metadata + user_leagues | Account sync and per-league sync |
+| Standings | Account sync and per-league sync |
+| Rosters | Per-league sync only (not during historical discovery) |
+| Matchups | Lazy — fetched when user views the matchups tab |
+| Transactions | Lazy — fetched when user views the transactions tab |
+| Historical seasons | Per-league sync discovers them (metadata + standings only) |
+
+For completed seasons (`league.season < current_year`), lazy endpoints serve cached data from the database without re-fetching from the platform.
+
+### Historical season discovery
+
+- **MFL**: Uses the league history API to get all past years. Same `platform_league_id` across years, different `year` parameter in API calls.
+- **Sleeper**: Walks the `previous_league_id` chain. Each season has a unique league ID.
+
+### Taxi squads
+
+Dynasty/keeper leagues on MFL and Sleeper support taxi squads (developmental player slots). Taxi players are included in the full `player_ids` list and separately tracked in a `taxi` list on `PlatformRosterEntry`. During roster sync, taxi players get the `TAXI` slot label.
 
 ---
 
@@ -118,7 +152,7 @@ Pre-calculates fantasy points in all three scoring formats and provides position
 
 These are issues identified in the current codebase that need to be addressed:
 
-1. **`LeagueType` enum** is missing `guillotine`. Currently only has `redraft`, `keeper`, `dynasty`.
+1. **`LeagueType` enum** is missing `guillotine`. Currently has `redraft`, `keeper`, `dynasty`, `bestball`.
 2. **`best_ball` flag** does not exist on the League model. Sleeper provides `settings.best_ball` but it's not extracted.
 3. **Sleeper adapter** (`SleeperAdapter.get_leagues()`) only maps `settings.type` values 0-2. Type 3 (guillotine) falls through and stores `league_type` as `NULL`.
 4. **`ADPFormat` enum** has no `best_ball` variant (though this may not be needed if no ADP source provides best-ball-specific data).

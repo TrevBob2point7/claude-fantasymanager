@@ -135,11 +135,11 @@ def _mock_mfl_response(status_code: int, text: str) -> AsyncMock:
 
 _MFL_SUCCESS_XML = (
     '<?xml version="1.0" encoding="UTF-8"?>'
-    '<status cookie_name="MFL_USER_ID" cookie_value="abc123"/>'
+    '<status MFL_USER_ID="abc123">OK</status>'
 )
 
 _MFL_INVALID_CREDS_XML = (
-    '<?xml version="1.0" encoding="UTF-8"?><status error="Invalid username or password"/>'
+    '<?xml version="1.0" encoding="UTF-8"?><error>Invalid username or password</error>'
 )
 
 

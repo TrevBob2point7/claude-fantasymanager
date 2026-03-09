@@ -26,6 +26,7 @@ class PlatformLeague:
     settings: dict | None = None
     previous_league_id: str | None = None
     roster_positions: list[str] | None = None
+    user_franchise_id: str | None = None  # MFL: franchise ID for the authenticated user
 
 
 @dataclass

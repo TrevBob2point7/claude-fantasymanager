@@ -1,9 +1,12 @@
 import { useState, useEffect, type FormEvent } from "react";
-import { getPlatformAccounts, createPlatformAccount, deletePlatformAccount } from "../api/platforms";
+import { getPlatformAccounts, createPlatformAccount, deletePlatformAccount, mflLogin } from "../api/platforms";
 import { discoverLeagues } from "../api/leagues";
 import { triggerSync } from "../api/sync";
 import { syncADP } from "../api/adp";
+import { getCurrentNflSeason } from "../api/season";
 import type { PlatformAccount, DiscoveredLeague } from "../api/types";
+
+type Platform = "sleeper" | "mfl";
 
 export default function LinkAccountsPage() {
   const [accounts, setAccounts] = useState<PlatformAccount[]>([]);
@@ -11,7 +14,9 @@ export default function LinkAccountsPage() {
   const [error, setError] = useState<string | null>(null);
 
   // Link form state
+  const [platform, setPlatform] = useState<Platform>("sleeper");
   const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [linking, setLinking] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
 
@@ -47,11 +52,16 @@ export default function LinkAccountsPage() {
     setLinking(true);
     setLinkError(null);
     try {
-      await createPlatformAccount({
-        platform_type: "sleeper",
-        platform_username: username,
-      });
+      if (platform === "mfl") {
+        await mflLogin({ username, password });
+      } else {
+        await createPlatformAccount({
+          platform_type: "sleeper",
+          platform_username: username,
+        });
+      }
       setUsername("");
+      setPassword("");
       loadAccounts();
     } catch (err) {
       setLinkError(err instanceof Error ? err.message : "Failed to link account");
@@ -78,7 +88,7 @@ export default function LinkAccountsPage() {
     setDiscoverError(null);
     setDiscovered([]);
     try {
-      const leagues = await discoverLeagues(accountId, 2025);
+      const leagues = await discoverLeagues(accountId, getCurrentNflSeason());
       setDiscovered(leagues);
     } catch (err) {
       setDiscoverError(
@@ -110,16 +120,30 @@ export default function LinkAccountsPage() {
     setSyncingAccount(accountId);
     setSyncMessage(null);
     try {
-      const result = await triggerSync(accountId);
-      setSyncMessage(
-        `Sync ${result.status}: ${result.synced.join(", ")}`,
-      );
+      await triggerSync(accountId, (event) => {
+        if (event.type === "progress") {
+          setSyncMessage(event.message ?? "Syncing...");
+        } else if (event.type === "done") {
+          const parts: string[] = [];
+          if (event.errors?.length) {
+            parts.push(`${event.errors.length} error(s)`);
+          }
+          setSyncMessage(parts.length ? `Sync complete with ${parts.join(", ")}` : "Sync complete");
+        } else if (event.type === "error") {
+          setSyncMessage(event.message ?? "Sync failed");
+        }
+      });
       loadAccounts();
     } catch (err) {
       setSyncMessage(err instanceof Error ? err.message : "Sync failed");
     } finally {
       setSyncingAccount(null);
     }
+  }
+
+  function formatPlatformType(type: string) {
+    if (type === "mfl") return "MFL";
+    return type.charAt(0).toUpperCase() + type.slice(1);
   }
 
   if (loading) {
@@ -150,27 +174,79 @@ export default function LinkAccountsPage() {
         onSubmit={handleLink}
         className="mt-6 rounded-xl border border-border bg-surface p-4"
       >
-        <h2 className="mb-3 font-heading text-lg font-semibold text-text-primary">
-          Link Sleeper Account
-        </h2>
+        <div className="mb-3 flex gap-4 border-b border-border">
+          <button
+            type="button"
+            onClick={() => setPlatform("sleeper")}
+            className={`pb-2 text-sm font-semibold transition-colors ${
+              platform === "sleeper"
+                ? "border-b-2 border-accent text-accent"
+                : "text-text-secondary hover:text-text-primary"
+            }`}
+          >
+            Sleeper
+          </button>
+          <button
+            type="button"
+            onClick={() => setPlatform("mfl")}
+            className={`pb-2 text-sm font-semibold transition-colors ${
+              platform === "mfl"
+                ? "border-b-2 border-accent text-accent"
+                : "text-text-secondary hover:text-text-primary"
+            }`}
+          >
+            MFL
+          </button>
+        </div>
         {linkError && (
           <p className="mb-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
             {linkError}
           </p>
         )}
         <div className="flex flex-col gap-3 sm:flex-row">
-          <label htmlFor="sleeper-username" className="sr-only">
-            Sleeper Username
-          </label>
-          <input
-            id="sleeper-username"
-            type="text"
-            required
-            placeholder="Sleeper username"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            className="h-11 flex-1 rounded-md border border-border bg-surface px-3 text-text-primary outline-none placeholder:text-text-secondary focus:ring-2 focus:ring-accent"
-          />
+          {platform === "sleeper" ? (
+            <>
+              <label htmlFor="sleeper-username" className="sr-only">
+                Sleeper Username
+              </label>
+              <input
+                id="sleeper-username"
+                type="text"
+                required
+                placeholder="Sleeper username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className="h-11 flex-1 rounded-md border border-border bg-surface px-3 text-text-primary outline-none placeholder:text-text-secondary focus:ring-2 focus:ring-accent"
+              />
+            </>
+          ) : (
+            <>
+              <label htmlFor="mfl-username" className="sr-only">
+                MFL Username
+              </label>
+              <input
+                id="mfl-username"
+                type="text"
+                required
+                placeholder="MFL username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className="h-11 flex-1 rounded-md border border-border bg-surface px-3 text-text-primary outline-none placeholder:text-text-secondary focus:ring-2 focus:ring-accent"
+              />
+              <label htmlFor="mfl-password" className="sr-only">
+                MFL Password
+              </label>
+              <input
+                id="mfl-password"
+                type="password"
+                required
+                placeholder="MFL password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="h-11 flex-1 rounded-md border border-border bg-surface px-3 text-text-primary outline-none placeholder:text-text-secondary focus:ring-2 focus:ring-accent"
+              />
+            </>
+          )}
           <button
             type="submit"
             disabled={linking}
@@ -193,12 +269,12 @@ export default function LinkAccountsPage() {
               className="rounded-xl border border-border bg-surface p-4"
             >
               <div className="flex items-center justify-between">
-                <div>
+                <div className="flex items-center gap-2">
+                  <span className="rounded bg-accent/10 px-2 py-0.5 text-xs font-medium text-accent">
+                    {formatPlatformType(account.platform_type)}
+                  </span>
                   <p className="font-medium text-text-primary">
                     {account.platform_username}
-                  </p>
-                  <p className="text-sm text-text-secondary">
-                    {account.platform_type}
                   </p>
                 </div>
               </div>

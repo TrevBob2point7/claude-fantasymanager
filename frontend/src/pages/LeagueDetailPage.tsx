@@ -1,6 +1,7 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { getLeagueDetail, getLeagueSeasons } from "../api/leagues";
+import { getLeagueDetail, getLeagueSeasons, linkLeagues, unlinkLeagues, getMatchupSummary, getMatchupDetail, getLeagueTransactions } from "../api/leagues";
+import { triggerLeagueSync, type SyncEvent } from "../api/sync";
 import { getRosterADP } from "../api/adp";
 import { getCurrentNflSeason } from "../api/season";
 import type {
@@ -9,6 +10,7 @@ import type {
   RosterPlayer,
   Standing,
   Matchup,
+  MatchupSummary,
   MatchupPlayer,
   Transaction,
 } from "../api/types";
@@ -42,6 +44,33 @@ export default function LeagueDetailPage() {
   const [adpFormat, setAdpFormat] = useState<string | null>(null);
   const [adpMap, setAdpMap] = useState<Record<string, string | null>>({});
   const [seasons, setSeasons] = useState<LeagueSeason[]>([]);
+  const [linkModalOpen, setLinkModalOpen] = useState(false);
+  const [unlinkModalOpen, setUnlinkModalOpen] = useState(false);
+  const [linkTargetId, setLinkTargetId] = useState("");
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const [linkLoading, setLinkLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+
+  const handleLeagueSync = useCallback(async () => {
+    if (!leagueId || syncing) return;
+    setSyncing(true);
+    setSyncMessage("Syncing...");
+    try {
+      await triggerLeagueSync(leagueId, (event: SyncEvent) => {
+        if (event.type === "progress") setSyncMessage(event.message ?? "Syncing...");
+        if (event.type === "done") setSyncMessage(null);
+      });
+      // Refresh league data
+      const data = await getLeagueDetail(leagueId);
+      setLeague(data);
+    } catch {
+      setSyncMessage("Sync failed");
+      setTimeout(() => setSyncMessage(null), 3000);
+    } finally {
+      setSyncing(false);
+    }
+  }, [leagueId, syncing]);
 
   // Fetch league detail when leagueId changes
   useEffect(() => {
@@ -103,6 +132,41 @@ export default function LeagueDetailPage() {
     );
   }
 
+  const isMultiPlatform = new Set(seasons.map((s) => s.platform_type)).size > 1;
+  const platformLabel = (pt: string) => (pt.length <= 3 ? pt.toUpperCase() : pt.charAt(0).toUpperCase() + pt.slice(1));
+  const distinctPlatforms = [...new Set(seasons.map((s) => s.platform_type))];
+
+  const handleLink = async () => {
+    if (!leagueId || !linkTargetId.trim()) return;
+    setLinkLoading(true);
+    setLinkError(null);
+    try {
+      const data = await linkLeagues(leagueId, linkTargetId.trim());
+      setSeasons(data.seasons);
+      setLinkModalOpen(false);
+      setLinkTargetId("");
+    } catch (err) {
+      setLinkError(err instanceof Error ? err.message : "Failed to link leagues");
+    } finally {
+      setLinkLoading(false);
+    }
+  };
+
+  const handleUnlink = async (platformType: string) => {
+    if (!leagueId) return;
+    setLinkLoading(true);
+    setLinkError(null);
+    try {
+      const data = await unlinkLeagues(leagueId, platformType);
+      setSeasons(data.seasons);
+      setUnlinkModalOpen(false);
+    } catch (err) {
+      setLinkError(err instanceof Error ? err.message : "Failed to unlink leagues");
+    } finally {
+      setLinkLoading(false);
+    }
+  };
+
   const isPastSeason = league.season < getCurrentNflSeason();
   const isCurrentSeason = !isPastSeason;
 
@@ -126,22 +190,47 @@ export default function LeagueDetailPage() {
             {" "}&middot; {league.roster_size ?? "—"} roster spots &middot; {league.team_name ?? "My Team"}
           </p>
         </div>
-        {seasons.length > 1 && (
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-text-secondary">Season:</span>
-            <select
-              value={leagueId}
-              onChange={(e) => navigate(`/leagues/${e.target.value}`)}
-              className="rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-text-primary"
+        <div className="flex items-center gap-2">
+          {seasons.length > 1 && (
+            <>
+              <span className="text-sm text-text-secondary">Season:</span>
+              <select
+                value={leagueId}
+                onChange={(e) => navigate(`/leagues/${e.target.value}`)}
+                className="rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-text-primary"
+              >
+                {seasons.map((s) => (
+                  <option key={s.league_id} value={s.league_id}>
+                    {isMultiPlatform ? `${s.season} (${platformLabel(s.platform_type)})` : s.season}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
+          <button
+            onClick={handleLeagueSync}
+            disabled={syncing}
+            className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
+          >
+            {syncing ? syncMessage ?? "Syncing..." : "Sync"}
+          </button>
+          <div className="relative">
+            <button
+              onClick={() => setLinkModalOpen(true)}
+              className="rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-text-secondary hover:text-text-primary"
             >
-              {seasons.map((s) => (
-                <option key={s.league_id} value={s.league_id}>
-                  {s.season}
-                </option>
-              ))}
-            </select>
+              Link
+            </button>
+            {isMultiPlatform && (
+              <button
+                onClick={() => setUnlinkModalOpen(true)}
+                className="ml-1 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-text-secondary hover:text-text-primary"
+              >
+                Unlink
+              </button>
+            )}
           </div>
-        )}
+        </div>
       </div>
 
       {/* Tabs */}
@@ -183,12 +272,98 @@ export default function LeagueDetailPage() {
         )}
         {activeTab === "standings" && <StandingsTab standings={league.standings} />}
         {activeTab === "matchups" && (
-          <MatchupsTab matchups={league.recent_matchups} teamName={league.team_name} />
+          <LazyMatchupsTab leagueId={league.id} teamName={league.team_name} />
         )}
         {activeTab === "transactions" && (
-          <TransactionsTab transactions={league.recent_transactions} />
+          <LazyTransactionsTab leagueId={league.id} />
         )}
       </div>
+
+      {linkModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => { setLinkModalOpen(false); setLinkError(null); setLinkTargetId(""); }}
+        >
+          <div
+            className="rounded-xl border border-border bg-surface p-6 max-w-md w-full mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="font-heading text-lg font-semibold text-text-primary">
+              Link League Seasons
+            </h2>
+            <p className="mt-2 text-sm text-text-secondary">
+              Enter the league ID (UUID) of another league to link as part of this league group.
+            </p>
+            <input
+              type="text"
+              value={linkTargetId}
+              onChange={(e) => setLinkTargetId(e.target.value)}
+              placeholder="Target league ID"
+              className="mt-3 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-secondary"
+            />
+            {linkError && (
+              <p className="mt-2 text-sm text-destructive">{linkError}</p>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => { setLinkModalOpen(false); setLinkError(null); setLinkTargetId(""); }}
+                className="rounded-lg border border-border px-4 py-2 text-sm text-text-secondary hover:text-text-primary"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleLink}
+                disabled={linkLoading || !linkTargetId.trim()}
+                className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-background disabled:opacity-50"
+              >
+                {linkLoading ? "Linking..." : "Link"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {unlinkModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => { setUnlinkModalOpen(false); setLinkError(null); }}
+        >
+          <div
+            className="rounded-xl border border-border bg-surface p-6 max-w-md w-full mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="font-heading text-lg font-semibold text-text-primary">
+              Unlink Platform
+            </h2>
+            <p className="mt-2 text-sm text-text-secondary">
+              Select a platform to remove from this league group.
+            </p>
+            {linkError && (
+              <p className="mt-2 text-sm text-destructive">{linkError}</p>
+            )}
+            <div className="mt-3 space-y-2">
+              {distinctPlatforms.map((pt) => (
+                <button
+                  key={pt}
+                  onClick={() => handleUnlink(pt)}
+                  disabled={linkLoading}
+                  className="w-full rounded-lg border border-border px-4 py-2 text-left text-sm text-text-primary hover:bg-surface-hover disabled:opacity-50"
+                >
+                  {platformLabel(pt)}
+                </button>
+              ))}
+            </div>
+            <div className="mt-4 flex justify-end">
+              <button
+                onClick={() => { setUnlinkModalOpen(false); setLinkError(null); }}
+                className="rounded-lg border border-border px-4 py-2 text-sm text-text-secondary hover:text-text-primary"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -805,19 +980,67 @@ function StandingsTab({ standings }: { standings: LeagueDetail["standings"] }) {
 }
 
 // ---------------------------------------------------------------------------
-// Matchups Tab (existing, preserved)
+// Lazy Matchups Tab — fetches summary on mount, detail on expand
 // ---------------------------------------------------------------------------
 
-function MatchupsTab({ matchups, teamName }: { matchups: LeagueDetail["recent_matchups"]; teamName: string | null }) {
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+function LazyMatchupsTab({ leagueId, teamName }: { leagueId: string; teamName: string | null }) {
+  const [summaries, setSummaries] = useState<MatchupSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedWeek, setExpandedWeek] = useState<number | null>(null);
+  const [weekDetail, setWeekDetail] = useState<Matchup[] | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const expandRequestId = useRef(0);
 
-  const userMatchups = matchups
+  useEffect(() => {
+    setLoading(true);
+    getMatchupSummary(leagueId)
+      .then(setSummaries)
+      .catch(() => setSummaries([]))
+      .finally(() => setLoading(false));
+  }, [leagueId]);
+
+  const handleExpand = async (week: number) => {
+    if (expandedWeek === week) {
+      setExpandedWeek(null);
+      setWeekDetail(null);
+      return;
+    }
+    const requestId = ++expandRequestId.current;
+    setExpandedWeek(week);
+    setDetailLoading(true);
+    try {
+      const detail = await getMatchupDetail(leagueId, week);
+      if (expandRequestId.current !== requestId) return; // stale request
+      setWeekDetail(detail);
+    } catch {
+      if (expandRequestId.current !== requestId) return;
+      setWeekDetail(null);
+    } finally {
+      if (expandRequestId.current === requestId) {
+        setDetailLoading(false);
+      }
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-8">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+        <span className="ml-2 text-sm text-text-secondary">Loading matchups...</span>
+      </div>
+    );
+  }
+
+  const userMatchups = summaries
     .filter((m) => m.is_user_matchup)
     .sort((a, b) => a.week - b.week);
 
   if (userMatchups.length === 0) {
     return <p className="py-8 text-center text-text-secondary">No matchup data available.</p>;
   }
+
+  // Find the expanded week's detail matchup for starters
+  const expandedMatchup = weekDetail?.find((m) => m.is_user_matchup) ?? null;
 
   return (
     <div className="space-y-3">
@@ -829,10 +1052,8 @@ function MatchupsTab({ matchups, teamName }: { matchups: LeagueDetail["recent_ma
         const won = scored && myScore > oppScore;
         const tied = scored && myScore === oppScore;
         const played = scored && (myScore > 0 || oppScore > 0);
-        const expanded = expandedId === m.id;
-        const hasStarters = m.home_starters != null || m.away_starters != null;
+        const isExpanded = expandedWeek === m.week;
 
-        // Left = away, right = home — matches expanded roster column order
         const leftTeam = m.away_team_name ?? "Away";
         const rightTeam = m.home_team_name ?? "Home";
         const leftScore = safeScore(m.away_score);
@@ -851,7 +1072,7 @@ function MatchupsTab({ matchups, teamName }: { matchups: LeagueDetail["recent_ma
             <button
               type="button"
               className="w-full p-4 text-left"
-              onClick={() => setExpandedId(expanded ? null : m.id)}
+              onClick={() => handleExpand(m.week)}
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -866,9 +1087,7 @@ function MatchupsTab({ matchups, teamName }: { matchups: LeagueDetail["recent_ma
                     </span>
                   )}
                 </div>
-                {hasStarters && (
-                  <span className="text-xs text-text-secondary">{expanded ? "▲" : "▼"}</span>
-                )}
+                <span className="text-xs text-text-secondary">{isExpanded ? "▲" : "▼"}</span>
               </div>
               <div className="mt-2 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
                 <div className="flex items-center justify-between min-w-0">
@@ -898,17 +1117,56 @@ function MatchupsTab({ matchups, teamName }: { matchups: LeagueDetail["recent_ma
                 </div>
               </div>
             </button>
-            {expanded && hasStarters && (
-              <MatchupStarters
-                leftStarters={m.away_starters}
-                rightStarters={m.home_starters}
-              />
+            {isExpanded && (
+              detailLoading ? (
+                <div className="border-t border-border px-4 py-3 text-center">
+                  <div className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+                  <span className="ml-2 text-sm text-text-secondary">Loading lineups...</span>
+                </div>
+              ) : expandedMatchup?.home_starters || expandedMatchup?.away_starters ? (
+                <MatchupStarters
+                  leftStarters={expandedMatchup.away_starters}
+                  rightStarters={expandedMatchup.home_starters}
+                />
+              ) : (
+                <div className="border-t border-border px-4 py-3 text-center text-sm text-text-secondary">
+                  No starter data available
+                </div>
+              )
             )}
           </div>
         );
       })}
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Lazy Transactions Tab
+// ---------------------------------------------------------------------------
+
+function LazyTransactionsTab({ leagueId }: { leagueId: string }) {
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    getLeagueTransactions(leagueId)
+      .then(setTransactions)
+      .catch(() => setTransactions([]))
+      .finally(() => setLoading(false));
+  }, [leagueId]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-8">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+        <span className="ml-2 text-sm text-text-secondary">Loading transactions...</span>
+      </div>
+    );
+  }
+
+  return <TransactionsTab transactions={transactions} />;
 }
 
 function MatchupStarters({

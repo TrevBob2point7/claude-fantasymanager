@@ -763,18 +763,20 @@ class TestSyncMFLLeague:
         await db_session.commit()
         await db_session.refresh(account)
 
+        mfl_league = PlatformLeague(
+            league_id="40750",
+            name="MFL Dynasty",
+            season=2025,
+            roster_size=25,
+            scoring_type="ppr",
+            league_type="dynasty",
+            settings={"startWeek": "1", "endWeek": "17", "lastRegularSeasonWeek": "14"},
+        )
+
         mock_adapter = _mock_adapter()
-        mock_adapter.get_leagues.return_value = [
-            PlatformLeague(
-                league_id="40750",
-                name="MFL Dynasty",
-                season=2025,
-                roster_size=25,
-                scoring_type="ppr",
-                league_type="dynasty",
-                settings={"startWeek": "1", "endWeek": "17", "lastRegularSeasonWeek": "14"},
-            )
-        ]
+        mock_adapter.get_leagues.return_value = [mfl_league]
+        # MFL sync_leagues enriches via get_league per league
+        mock_adapter.get_league = AsyncMock(return_value=mfl_league)
 
         with patch("app.sync.engine.get_adapter", return_value=mock_adapter) as mock_get:
             engine = SyncEngine(db_session)
@@ -790,8 +792,8 @@ class TestSyncMFLLeague:
 
 
 class TestSyncMFLWeekCount:
-    async def test_sync_all_uses_end_week_for_mfl(self, db_session: AsyncSession):
-        """MFL leagues use endWeek from settings instead of leg."""
+    async def test_sync_all_does_not_fetch_matchups(self, db_session: AsyncSession):
+        """sync_all no longer syncs matchups — they are fetched lazily."""
         user = await _create_test_user(db_session)
         account = PlatformAccount(
             user_id=user.id,
@@ -804,15 +806,16 @@ class TestSyncMFLWeekCount:
         await db_session.commit()
         await db_session.refresh(account)
 
+        mfl_league = PlatformLeague(
+            league_id="40750",
+            name="MFL League",
+            season=2025,
+            settings={"endWeek": "16"},
+        )
+
         mock_adapter = _mock_adapter()
-        mock_adapter.get_leagues.return_value = [
-            PlatformLeague(
-                league_id="40750",
-                name="MFL League",
-                season=2025,
-                settings={"endWeek": "16"},  # MFL uses endWeek, not leg
-            )
-        ]
+        mock_adapter.get_leagues.return_value = [mfl_league]
+        mock_adapter.get_league = AsyncMock(return_value=mfl_league)
         mock_adapter.get_rosters.return_value = []
         mock_adapter.get_league_users.return_value = []
 
@@ -820,15 +823,8 @@ class TestSyncMFLWeekCount:
             engine = SyncEngine(db_session)
             await engine.sync_all(user.id, account, 2025)
 
-        # Should have synced matchups for weeks 1-16 (endWeek=16)
-        # Verify via the mock calls to get_matchups
-        matchup_weeks = [
-            call.args[1] if len(call.args) > 1 else call.kwargs.get("week")
-            for call in mock_adapter.get_matchups.call_args_list
-        ]
-        # Should have synced exactly weeks 1-16
-        assert len(matchup_weeks) == 16
-        assert max(matchup_weeks) == 16
+        # Matchups should NOT be fetched during sync_all (lazy loading)
+        mock_adapter.get_matchups.assert_not_called()
 
 
 class TestSyncMFLHistoricalSeasons:
@@ -846,19 +842,19 @@ class TestSyncMFLHistoricalSeasons:
         await db_session.commit()
         await db_session.refresh(account)
 
-        # Current season league with previous_league_id pointing to same ID (MFL pattern)
         current_league = League(
             platform_type=PlatformType.mfl,
             platform_league_id="40750",
             name="MFL Dynasty",
             season=2025,
             settings_json={"endWeek": "17"},
-            previous_league_id="40750",  # Same ID, different year
         )
         db_session.add(current_league)
         await db_session.flush()
 
         mock_adapter = _mock_adapter()
+        # MFL historical uses get_history_years to discover past seasons
+        mock_adapter.get_history_years = AsyncMock(return_value=[2025, 2024])
         mock_adapter.get_league.return_value = PlatformLeague(
             league_id="40750",
             name="MFL Dynasty",
@@ -866,7 +862,7 @@ class TestSyncMFLHistoricalSeasons:
             roster_size=25,
             scoring_type="ppr",
             settings={"endWeek": "17"},
-            previous_league_id=None,  # End of chain
+            previous_league_id=None,
         )
         mock_adapter.get_rosters.return_value = []
         mock_adapter.get_league_users.return_value = []
@@ -881,10 +877,181 @@ class TestSyncMFLHistoricalSeasons:
             engine = SyncEngine(db_session)
             await engine.sync_historical_seasons(current_league, user.id, account)
 
-        # Verify that get_adapter was called with year=2024 for the historical season
+        # First call: year=2025 (to fetch history entries)
+        # Second call: year=2024 (to sync the historical season)
         year_calls = [c for c in get_adapter_calls if c[1].get("year") is not None]
-        assert len(year_calls) >= 1
-        assert year_calls[0][1]["year"] == 2024
+        assert len(year_calls) >= 2
+        assert year_calls[0][1]["year"] == 2025  # history discovery
+        assert year_calls[1][1]["year"] == 2024  # historical season sync
+
+    async def test_mfl_historical_uses_history_entries(self, db_session: AsyncSession):
+        """MFL historical sync discovers years from get_history_years, not chain walking."""
+        user = await _create_test_user(db_session)
+        account = PlatformAccount(
+            user_id=user.id,
+            platform_type=PlatformType.mfl,
+            platform_username="mfluser",
+            platform_user_id="mfluser",
+            credentials_json={"cookie": "MFL_USER_ID=test123"},
+        )
+        db_session.add(account)
+        await db_session.commit()
+        await db_session.refresh(account)
+
+        current_league = League(
+            platform_type=PlatformType.mfl,
+            platform_league_id="40750",
+            name="MFL Dynasty",
+            season=2025,
+            settings_json={"endWeek": "17"},
+        )
+        db_session.add(current_league)
+        await db_session.flush()
+
+        mock_adapter = _mock_adapter()
+        # get_history_years returns multiple past years
+        mock_adapter.get_history_years = AsyncMock(return_value=[2025, 2024, 2023, 2022])
+        # get_league returns metadata for each historical year
+        mock_adapter.get_league = AsyncMock(side_effect=lambda lid: PlatformLeague(
+            league_id="40750",
+            name="MFL Dynasty",
+            season=2020,  # will be overridden by year adapter
+            roster_size=25,
+            scoring_type="ppr",
+            settings={"endWeek": "17"},
+        ))
+        mock_adapter.get_rosters.return_value = []
+        mock_adapter.get_league_users.return_value = []
+
+        def mock_get_adapter(platform_type, **kwargs):
+            return mock_adapter
+
+        with patch("app.sync.engine.get_adapter", side_effect=mock_get_adapter):
+            engine = SyncEngine(db_session)
+            await engine.sync_historical_seasons(current_league, user.id, account)
+
+        # get_history_years should have been called
+        mock_adapter.get_history_years.assert_called_once_with("40750")
+        # get_league should have been called for each historical year (2024, 2023, 2022)
+        assert mock_adapter.get_league.call_count == 3
+
+    async def test_mfl_historical_carries_user_franchise_id(self, db_session: AsyncSession):
+        """user_franchise_id from parent league settings is carried to historical leagues."""
+        user = await _create_test_user(db_session)
+        account = PlatformAccount(
+            user_id=user.id,
+            platform_type=PlatformType.mfl,
+            platform_username="mfluser",
+            platform_user_id="mfluser",
+            credentials_json={"cookie": "MFL_USER_ID=test123"},
+        )
+        db_session.add(account)
+        await db_session.commit()
+        await db_session.refresh(account)
+
+        current_league = League(
+            platform_type=PlatformType.mfl,
+            platform_league_id="40750",
+            name="MFL Dynasty",
+            season=2025,
+            settings_json={"endWeek": "17", "user_franchise_id": "0003"},
+        )
+        db_session.add(current_league)
+        await db_session.flush()
+
+        mock_adapter = _mock_adapter()
+        mock_adapter.get_history_years = AsyncMock(return_value=[2025, 2024])
+        mock_adapter.get_league = AsyncMock(return_value=PlatformLeague(
+            league_id="40750",
+            name="MFL Dynasty",
+            season=2024,
+            roster_size=25,
+            scoring_type="ppr",
+            settings={"endWeek": "17"},
+        ))
+        mock_adapter.get_rosters.return_value = []
+        mock_adapter.get_league_users.return_value = []
+
+        def mock_get_adapter(platform_type, **kwargs):
+            return mock_adapter
+
+        with patch("app.sync.engine.get_adapter", side_effect=mock_get_adapter):
+            engine = SyncEngine(db_session)
+            await engine.sync_historical_seasons(current_league, user.id, account)
+
+        # Verify historical league has user_franchise_id carried over
+        result = await db_session.execute(
+            select(League).where(
+                League.platform_type == PlatformType.mfl,
+                League.platform_league_id == "40750",
+                League.season == 2024,
+            )
+        )
+        hist_league = result.scalar_one()
+        assert hist_league.settings_json.get("user_franchise_id") == "0003"
+
+    async def test_chain_historical_cycle_detection(self, db_session: AsyncSession):
+        """Chain walking stops if it encounters a league that already exists (no infinite loop)."""
+        user = await _create_test_user(db_session)
+        account = await _create_platform_account(db_session, user)
+
+        # Create a league chain: 2025 -> 2024 -> 2023 -> 2024 (cycle!)
+        mock_adapter = _mock_adapter()
+        mock_adapter.get_leagues.return_value = [
+            PlatformLeague(
+                league_id="lg_2025",
+                name="Dynasty",
+                season=2025,
+                settings={"leg": 1},
+                previous_league_id="lg_2024",
+            )
+        ]
+
+        call_count = 0
+
+        async def mock_get_league(league_id: str):
+            nonlocal call_count
+            call_count += 1
+            if call_count > 10:
+                raise RuntimeError("Infinite loop detected in test")
+            if league_id == "lg_2024":
+                return PlatformLeague(
+                    league_id="lg_2024",
+                    name="Dynasty",
+                    season=2024,
+                    settings={"leg": 17},
+                    previous_league_id="lg_2023",
+                )
+            elif league_id == "lg_2023":
+                return PlatformLeague(
+                    league_id="lg_2023",
+                    name="Dynasty",
+                    season=2023,
+                    settings={"leg": 17},
+                    previous_league_id="lg_2024",  # Cycle!
+                )
+            raise ValueError(f"Unknown league: {league_id}")
+
+        mock_adapter.get_league = AsyncMock(side_effect=mock_get_league)
+        mock_adapter.get_rosters.return_value = []
+        mock_adapter.get_league_users.return_value = []
+
+        with patch("app.sync.engine.get_adapter", return_value=mock_adapter):
+            engine = SyncEngine(db_session)
+            leagues = await engine.sync_leagues(user.id, account, 2025)
+            # This should NOT loop forever — cycle is broken because
+            # chain walking checks for existing leagues in DB
+            await engine.sync_historical_seasons(leagues[0], user.id, account)
+
+        # Should have created 2024 and 2023, then stopped when 2024 already exists
+        result = await db_session.execute(select(League))
+        db_leagues = result.scalars().all()
+        seasons = sorted([lg.season for lg in db_leagues])
+        assert 2023 in seasons
+        assert 2024 in seasons
+        assert 2025 in seasons
+        # Should not have looped more than necessary
+        assert call_count <= 4
 
 
 class TestSyncMFLStandings:
