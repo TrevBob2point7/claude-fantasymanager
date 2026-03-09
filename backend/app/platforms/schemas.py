@@ -46,6 +46,8 @@ class PlatformMatchup:
     week: int = 0
     starters: list[str] = field(default_factory=list)
     starters_points: dict[str, float] = field(default_factory=dict)
+    playoff_round: int | None = None
+    is_consolation: bool = False
 
 
 @dataclass

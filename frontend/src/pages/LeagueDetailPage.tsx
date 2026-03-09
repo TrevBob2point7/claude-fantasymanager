@@ -1039,6 +1039,11 @@ function LazyMatchupsTab({ leagueId, teamName }: { leagueId: string; teamName: s
     return <p className="py-8 text-center text-text-secondary">No matchup data available.</p>;
   }
 
+  const maxPlayoffRound = Math.max(
+    ...summaries.filter((m) => m.playoff_round != null).map((m) => m.playoff_round!),
+    0,
+  );
+
   // Find the expanded week's detail matchup for starters
   const expandedMatchup = weekDetail?.find((m) => m.is_user_matchup) ?? null;
 
@@ -1084,6 +1089,18 @@ function LazyMatchupsTab({ leagueId, teamName }: { leagueId: string; teamName: s
                       "bg-destructive/15 text-destructive"
                     }`}>
                       {won ? "W" : tied ? "T" : "L"}
+                    </span>
+                  )}
+                  {m.playoff_round != null && (
+                    <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                      m.is_consolation ? "bg-surface-hover text-text-secondary" :
+                      m.playoff_round === maxPlayoffRound ? "bg-amber-500/15 text-amber-500" :
+                      "bg-accent/15 text-accent"
+                    }`}>
+                      {m.is_consolation ? "Consolation" :
+                       m.playoff_round === maxPlayoffRound ? "Championship" :
+                       m.playoff_round === maxPlayoffRound - 1 ? "Semis" :
+                       `Round ${m.playoff_round}`}
                     </span>
                   )}
                 </div>

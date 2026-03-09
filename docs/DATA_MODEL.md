@@ -215,6 +215,8 @@ Weekly matchup pairings and scores.
 | `away_score` | NUMERIC(10,2) | YES | — | |
 | `home_starters_json` | JSON | YES | — | `[{player_id, name, position, points, slot}]` |
 | `away_starters_json` | JSON | YES | — | Same format as `home_starters_json` |
+| `playoff_round` | INTEGER | YES | — | NULL=regular season, 1=wildcard, 2=semis, 3=finals |
+| `is_consolation` | BOOLEAN | NO | `false` | True if consolation/losers bracket matchup |
 | `created_at` | TIMESTAMPTZ | NO | `now()` | |
 | `updated_at` | TIMESTAMPTZ | NO | `now()` | Auto-updated |
 

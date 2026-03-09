@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -34,6 +35,41 @@ from app.sync.player_import import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _get_playoff_round(league: League, week: int) -> int | None:
+    """Derive playoff round from league settings and week number.
+
+    Returns None for regular season, 1+ for playoff rounds.
+    Skips best ball and guillotine leagues (no playoffs).
+    """
+    league_type = str(league.league_type) if league.league_type else None
+    if league_type in ("bestball", "guillotine"):
+        return None
+
+    settings = league.settings_json or {}
+
+    if league.platform_type == PlatformType.sleeper:
+        playoff_start = settings.get("playoff_week_start")
+        if not playoff_start:
+            playoff_teams = settings.get("playoff_teams", 0)
+            if not playoff_teams or int(playoff_teams) <= 0:
+                return None
+            num_rounds = math.ceil(math.log2(int(playoff_teams)))
+            total_weeks = int(settings.get("leg", 17))
+            playoff_start = total_weeks - num_rounds + 1
+        playoff_start = int(playoff_start)
+    elif league.platform_type == PlatformType.mfl:
+        last_reg = settings.get("lastRegularSeasonWeek")
+        if not last_reg:
+            return None
+        playoff_start = int(last_reg) + 1
+    else:
+        return None
+
+    if week >= playoff_start:
+        return week - playoff_start + 1
+    return None
 
 
 class SyncEngine:
@@ -518,6 +554,8 @@ class SyncEngine:
             for m in platform_matchups:
                 groups.setdefault(m.matchup_id, []).append(m)
 
+            playoff_round = _get_playoff_round(league, week)
+
             for _matchup_id, entries in groups.items():
                 if len(entries) < 2:
                     continue
@@ -528,6 +566,10 @@ class SyncEngine:
                 home_ul = ul_by_platform_id.get(home.roster_id)
                 away_ul = ul_by_platform_id.get(away.roster_id)
                 if not home_ul or not away_ul:
+                    continue
+
+                # Skip phantom playoff matchups (projected pairings with no scores)
+                if playoff_round and home.points is None and away.points is None:
                     continue
 
                 home_starters = self._build_starters_json(
@@ -560,12 +602,14 @@ class SyncEngine:
                         ),
                     )
                 )
+
                 matchup = existing.scalar_one_or_none()
                 if matchup:
                     matchup.home_score = home.points
                     matchup.away_score = away.points
                     matchup.home_starters_json = home_starters
                     matchup.away_starters_json = away_starters
+                    matchup.playoff_round = playoff_round
                 else:
                     matchup = Matchup(
                         league_id=league.id,
@@ -576,6 +620,7 @@ class SyncEngine:
                         away_score=away.points,
                         home_starters_json=home_starters,
                         away_starters_json=away_starters,
+                        playoff_round=playoff_round,
                     )
                     self.db.add(matchup)
 
