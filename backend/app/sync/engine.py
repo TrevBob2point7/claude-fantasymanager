@@ -762,16 +762,16 @@ class SyncEngine:
             consolation_pairings = [
                 list(pair) for pair in get_consolation_pairings_sleeper(losers)
             ]
-            bye_ids = list(detect_byes_sleeper(winners))
+            bye_ids = sorted(detect_byes_sleeper(winners))
         elif league.platform_type == PlatformType.mfl:
             champion_id = detect_champion_mfl(winners)
-            bye_ids = list(detect_byes_mfl(winners))
+            bye_ids = sorted(detect_byes_mfl(winners))
             settings = league.settings_json or {}
             last_reg = settings.get("lastRegularSeasonWeek")
             if last_reg:
                 playoff_start = int(last_reg) + 1
                 raw = get_consolation_by_round_mfl(losers, playoff_start)
-                consolation_by_round = {r: list(ids) for r, ids in raw.items()}
+                consolation_by_round = {r: sorted(ids) for r, ids in raw.items()}
 
         # Store in settings_json
         settings = dict(league.settings_json or {})
