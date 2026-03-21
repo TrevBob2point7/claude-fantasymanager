@@ -101,6 +101,7 @@ export interface Matchup {
   away_starters: MatchupPlayer[] | null;
   playoff_round: number | null;
   is_consolation: boolean;
+  is_bye: boolean;
 }
 
 export interface Transaction {
@@ -131,6 +132,7 @@ export interface MatchupSummary {
   is_user_matchup: boolean;
   playoff_round: number | null;
   is_consolation: boolean;
+  is_bye: boolean;
 }
 
 export interface LeagueSeason {

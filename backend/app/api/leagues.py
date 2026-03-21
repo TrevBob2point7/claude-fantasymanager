@@ -254,7 +254,10 @@ async def get_league_detail(
             id=m.id,
             week=m.week,
             home_team_name=all_uls.get(m.home_user_league_id),
-            away_team_name=all_uls.get(m.away_user_league_id),
+            away_team_name=(
+                "BYE" if m.away_user_league_id is None
+                else all_uls.get(m.away_user_league_id)
+            ),
             home_score=m.home_score,
             away_score=m.away_score,
             is_user_matchup=(
@@ -269,6 +272,7 @@ async def get_league_detail(
             ] if m.away_starters_json else None,
             playoff_round=m.playoff_round,
             is_consolation=m.is_consolation,
+            is_bye=m.away_user_league_id is None,
         )
         for m in matchups_raw
     ]
@@ -643,7 +647,10 @@ async def get_matchup_summary(
             id=m.id,
             week=m.week,
             home_team_name=all_uls.get(m.home_user_league_id),
-            away_team_name=all_uls.get(m.away_user_league_id),
+            away_team_name=(
+                "BYE" if m.away_user_league_id is None
+                else all_uls.get(m.away_user_league_id)
+            ),
             home_score=m.home_score,
             away_score=m.away_score,
             is_user_matchup=(
@@ -652,6 +659,7 @@ async def get_matchup_summary(
             ),
             playoff_round=m.playoff_round,
             is_consolation=m.is_consolation,
+            is_bye=m.away_user_league_id is None,
         )
         for m in cached
     ]
@@ -717,7 +725,10 @@ async def get_matchup_detail(
             id=m.id,
             week=m.week,
             home_team_name=all_uls.get(m.home_user_league_id),
-            away_team_name=all_uls.get(m.away_user_league_id),
+            away_team_name=(
+                "BYE" if m.away_user_league_id is None
+                else all_uls.get(m.away_user_league_id)
+            ),
             home_score=m.home_score,
             away_score=m.away_score,
             is_user_matchup=(
@@ -732,6 +743,7 @@ async def get_matchup_detail(
             ] if m.away_starters_json else None,
             playoff_round=m.playoff_round,
             is_consolation=m.is_consolation,
+            is_bye=m.away_user_league_id is None,
         )
         for m in cached
     ]
