@@ -721,8 +721,9 @@ class SyncEngine:
     ) -> None:
         """Fetch bracket data and store in league.settings_json.
 
-        Stores bracket_data with champion_franchise_id and consolation_franchise_ids
-        so that is_consolation can be applied when matchups are later synced.
+        Stores bracket_data with champion_franchise_id, consolation_by_round
+        (MFL), consolation_pairings (Sleeper), and byes so that
+        is_consolation and bye matchups can be applied during sync.
         Skips best ball and guillotine leagues.
         """
         league_type = str(league.league_type) if league.league_type else None
