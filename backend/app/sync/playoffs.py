@@ -114,7 +114,10 @@ def get_consolation_by_round_mfl(
     """
     by_round: dict[int, set[str]] = {}
     for rnd in consolation_rounds:
-        week = int(rnd.get("week", 0))
+        try:
+            week = int(rnd.get("week", 0))
+        except (TypeError, ValueError):
+            continue
         if not week:
             continue
         playoff_round = week - playoff_start_week + 1
