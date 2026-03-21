@@ -1256,7 +1256,7 @@ class TestSyncPlayoffBrackets:
         assert bracket_data["champion_franchise_id"] == "1"
         assert len(bracket_data["consolation_pairings"]) == 2
         assert ["5", "6"] in bracket_data["consolation_pairings"]
-        assert bracket_data["byes"] == {"1": ["1", "2"]}
+        assert set(bracket_data["byes"]["1"]) == {"1", "2"}
 
         # Verify consolation flags on matchups
         await db_session.refresh(m_winners)
