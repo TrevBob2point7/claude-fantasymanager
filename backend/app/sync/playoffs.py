@@ -46,23 +46,62 @@ def detect_champion_mfl(winners_bracket_rounds: list[dict]) -> str | None:
     return None
 
 
-def get_consolation_by_round_sleeper(losers_bracket: list[dict]) -> dict[int, set[str]]:
-    """Extract roster_ids per round from the Sleeper losers bracket.
+def get_consolation_pairings_sleeper(losers_bracket: list[dict]) -> list[tuple[str, str]]:
+    """Extract matchup pairings from the Sleeper losers bracket.
 
-    Returns {round_number: set_of_roster_ids} so we can match consolation
-    status to specific playoff rounds, not just franchise identity.
+    Returns a list of (roster_id_a, roster_id_b) tuples — one per consolation
+    matchup.  The caller can check whether a given matchup pairing appears in
+    this list to decide ``is_consolation``.
+
+    This avoids the round-mapping problem: Sleeper bracket round numbers (``r``)
+    don't correspond 1-to-1 with ``playoff_round`` (derived from week number)
+    because losers bracket round N plays during playoff week N+1 or later.
+    Matching on exact pairings is unambiguous regardless of bracket structure
+    or multi-week playoff rounds.
     """
-    by_round: dict[int, set[str]] = {}
+    pairings: list[tuple[str, str]] = []
     for m in losers_bracket:
-        r = m.get("r")
-        if r is None:
-            continue
-        ids = by_round.setdefault(r, set())
-        for key in ("t1", "t2", "w", "l"):
+        t1 = m.get("t1")
+        t2 = m.get("t2")
+        if t1 is not None and t2 is not None:
+            pairings.append((str(t1), str(t2)))
+    return pairings
+
+
+def detect_byes_sleeper(winners_bracket: list[dict]) -> set[str]:
+    """Return roster_ids that had a first-round bye."""
+    if not winners_bracket:
+        return set()
+    round_1_ids: set[str] = set()
+    all_ids: set[str] = set()
+    for m in winners_bracket:
+        for key in ("t1", "t2"):
             val = m.get(key)
             if val is not None:
-                ids.add(str(val))
-    return by_round
+                all_ids.add(str(val))
+                if m.get("r") == 1:
+                    round_1_ids.add(str(val))
+    return all_ids - round_1_ids
+
+
+def detect_byes_mfl(winners_bracket_rounds: list[dict]) -> set[str]:
+    """Return franchise_ids that had a first-round bye."""
+    if not winners_bracket_rounds:
+        return set()
+    round_1_ids: set[str] = set()
+    all_ids: set[str] = set()
+    for i, rnd in enumerate(winners_bracket_rounds):
+        games = rnd.get("playoffGame", [])
+        if isinstance(games, dict):
+            games = [games]
+        for game in games:
+            for side in ("home", "away"):
+                fid = game.get(side, {}).get("franchise_id")
+                if fid:
+                    all_ids.add(fid)
+                    if i == 0:
+                        round_1_ids.add(fid)
+    return all_ids - round_1_ids
 
 
 def get_consolation_by_round_mfl(
