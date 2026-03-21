@@ -52,7 +52,7 @@ class SleeperAdapter(PlatformAdapter):
 
         settings = lg.get("settings", {})
         type_code = settings.get("type", 0) if settings else 0
-        league_type_map = {0: "redraft", 1: "keeper", 2: "dynasty"}
+        league_type_map = {0: "redraft", 1: "keeper", 2: "dynasty", 3: "guillotine"}
         league_type = league_type_map.get(type_code)
 
         roster_positions = lg.get("roster_positions")

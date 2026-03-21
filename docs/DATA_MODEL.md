@@ -49,7 +49,7 @@ All enums are defined in `backend/app/models/enums.py` and stored as PostgreSQL 
 | `PlayerStatus` | `playerstatus` | `active`, `injured_reserve`, `out`, `questionable`, `doubtful`, `suspended` |
 | `TransactionType` | `transactiontype` | `add`, `drop`, `trade`, `waiver` |
 | `SyncStatus` | `syncstatus` | `pending`, `in_progress`, `completed`, `failed` |
-| `LeagueType` | `leaguetype` | `redraft`, `keeper`, `dynasty`, `bestball` |
+| `LeagueType` | `leaguetype` | `redraft`, `keeper`, `dynasty`, `bestball`, `guillotine` |
 | `ADPFormat` | `adpformat` | `standard`, `half_ppr`, `ppr`, `superflex`, `dynasty`, `two_qb` |
 | `DataType` | `datatype` | `leagues`, `rosters`, `matchups`, `standings`, `players`, `transactions` |
 

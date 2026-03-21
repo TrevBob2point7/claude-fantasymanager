@@ -58,6 +58,7 @@ class LeagueType(enum.StrEnum):
     keeper = "keeper"
     dynasty = "dynasty"
     bestball = "bestball"
+    guillotine = "guillotine"
 
 
 class ADPFormat(enum.StrEnum):
