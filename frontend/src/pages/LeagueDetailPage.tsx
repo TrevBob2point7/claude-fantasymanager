@@ -1064,6 +1064,24 @@ function LazyMatchupsTab({ leagueId, teamName }: { leagueId: string; teamName: s
         const leftScore = safeScore(m.away_score);
         const rightScore = safeScore(m.home_score);
 
+        if (m.is_bye) {
+          return (
+            <div key={m.id} className="rounded-xl border border-border bg-surface">
+              <div className="w-full p-4">
+                <div className="flex items-center gap-2">
+                  <p className="text-xs font-medium text-text-secondary">Week {m.week}</p>
+                  <span className="rounded-full bg-accent/15 px-2.5 py-0.5 text-xs font-semibold text-accent">
+                    BYE
+                  </span>
+                </div>
+                <p className="mt-2 font-medium text-text-primary">
+                  {m.home_team_name ?? "Team"} — BYE
+                </p>
+              </div>
+            </div>
+          );
+        }
+
         return (
           <div
             key={m.id}

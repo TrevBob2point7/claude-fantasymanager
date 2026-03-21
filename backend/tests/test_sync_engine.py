@@ -1177,3 +1177,211 @@ class TestSyncMFLStandings:
         # Team A won, so should be rank 1
         assert standings[0].user_league_id == ul1.id
         assert standings[0].wins == 1
+
+
+class TestSyncPlayoffBrackets:
+    """Tests for bracket sync: consolation flags, champion detection, and byes."""
+
+    async def _setup_league_with_teams(
+        self, db_session: AsyncSession, *, platform: PlatformType = PlatformType.sleeper,
+        settings: dict | None = None, num_teams: int = 6,
+    ):
+        """Create a league with user_leagues for testing bracket sync."""
+        user = await _create_test_user(db_session)
+
+        league = League(
+            platform_type=platform,
+            platform_league_id="bracket_lg",
+            name="Bracket Test",
+            season=2025,
+            settings_json=settings or {"playoff_week_start": 15, "playoff_teams": 6, "leg": 17},
+        )
+        db_session.add(league)
+        await db_session.flush()
+
+        uls = {}
+        for i in range(1, num_teams + 1):
+            ul = UserLeague(
+                user_id=user.id if i == 1 else None,
+                league_id=league.id,
+                team_name=f"Team {i}",
+                platform_team_id=str(i),
+            )
+            db_session.add(ul)
+            uls[str(i)] = ul
+        await db_session.flush()
+        for ul in uls.values():
+            await db_session.refresh(ul)
+
+        return user, league, uls
+
+    async def test_sleeper_consolation_pairings_applied(self, db_session: AsyncSession):
+        """Bracket sync stores consolation pairings and flags matchups correctly."""
+        _, league, uls = await self._setup_league_with_teams(db_session)
+
+        # Create playoff matchups: round 2 has a consolation game (5 vs 6)
+        # and a winners game (1 vs 3)
+        m_winners = Matchup(
+            league_id=league.id, week=16,
+            home_user_league_id=uls["1"].id, away_user_league_id=uls["3"].id,
+            home_score=120, away_score=100, playoff_round=2,
+        )
+        m_consolation = Matchup(
+            league_id=league.id, week=16,
+            home_user_league_id=uls["5"].id, away_user_league_id=uls["6"].id,
+            home_score=90, away_score=80, playoff_round=2,
+        )
+        db_session.add_all([m_winners, m_consolation])
+        await db_session.flush()
+
+        # Mock adapter returns brackets
+        mock_adapter = AsyncMock()
+        mock_adapter.get_winners_bracket.return_value = [
+            {"r": 1, "m": 1, "t1": 3, "t2": 6, "w": 3, "l": 6},
+            {"r": 1, "m": 2, "t1": 4, "t2": 5, "w": 4, "l": 5},
+            {"r": 2, "m": 3, "t1": 1, "t2": 3, "w": 1, "l": 3},
+            {"r": 2, "m": 4, "t1": 2, "t2": 4, "w": 2, "l": 4},
+            {"r": 3, "m": 5, "t1": 1, "t2": 2, "w": 1, "l": 2},
+        ]
+        mock_adapter.get_losers_bracket.return_value = [
+            {"r": 1, "m": 1, "t1": 5, "t2": 6, "w": 5, "l": 6},
+            {"r": 2, "m": 2, "t1": 3, "t2": 4, "w": 3, "l": 4},
+        ]
+
+        engine = SyncEngine(db_session)
+        await engine.sync_playoff_brackets(league, adapter=mock_adapter)
+
+        # Verify bracket_data stored
+        bracket_data = league.settings_json.get("bracket_data", {})
+        assert bracket_data["champion_franchise_id"] == "1"
+        assert len(bracket_data["consolation_pairings"]) == 2
+        assert ["5", "6"] in bracket_data["consolation_pairings"]
+        assert set(bracket_data["byes"]["1"]) == {"1", "2"}
+
+        # Verify consolation flags on matchups
+        await db_session.refresh(m_winners)
+        await db_session.refresh(m_consolation)
+        assert m_winners.is_consolation is False
+        assert m_consolation.is_consolation is True
+
+    async def test_mfl_consolation_by_round_applied(self, db_session: AsyncSession):
+        """MFL bracket sync uses round-based consolation and flags matchups."""
+        _, league, uls = await self._setup_league_with_teams(
+            db_session,
+            platform=PlatformType.mfl,
+            settings={"lastRegularSeasonWeek": "14", "endWeek": "17"},
+        )
+
+        # Week 17 (playoff_round 3): championship + 3rd place game
+        m_champ = Matchup(
+            league_id=league.id, week=17,
+            home_user_league_id=uls["1"].id, away_user_league_id=uls["2"].id,
+            home_score=140, away_score=130, playoff_round=3,
+        )
+        m_3rd = Matchup(
+            league_id=league.id, week=17,
+            home_user_league_id=uls["3"].id, away_user_league_id=uls["4"].id,
+            home_score=110, away_score=100, playoff_round=3,
+        )
+        db_session.add_all([m_champ, m_3rd])
+        await db_session.flush()
+
+        mock_adapter = AsyncMock()
+        # MFL winners bracket: 3 rounds
+        mock_adapter.get_winners_bracket.return_value = [
+            {"week": "15", "playoffGame": [
+                {"home": {"franchise_id": "3", "seed": "3", "points": "100"},
+                 "away": {"franchise_id": "6", "seed": "6", "points": "90"}},
+                {"home": {"franchise_id": "4", "seed": "4", "points": "95"},
+                 "away": {"franchise_id": "5", "seed": "5", "points": "85"}},
+            ]},
+            {"week": "16", "playoffGame": [
+                {"home": {"franchise_id": "1", "seed": "1", "points": "130"},
+                 "away": {"franchise_id": "3", "points": "110"}},
+                {"home": {"franchise_id": "2", "seed": "2", "points": "125"},
+                 "away": {"franchise_id": "4", "points": "105"}},
+            ]},
+            {"week": "17", "playoffGame": {
+                "home": {"franchise_id": "1", "points": "140"},
+                "away": {"franchise_id": "2", "points": "130"},
+            }},
+        ]
+        # MFL losers bracket: 3rd place game
+        mock_adapter.get_losers_bracket.return_value = [
+            {"week": "17", "playoffGame": {
+                "home": {"franchise_id": "3"},
+                "away": {"franchise_id": "4"},
+            }},
+        ]
+
+        engine = SyncEngine(db_session)
+        await engine.sync_playoff_brackets(league, adapter=mock_adapter)
+
+        bracket_data = league.settings_json.get("bracket_data", {})
+        assert bracket_data["champion_franchise_id"] == "1"
+        assert "3" in bracket_data["consolation_by_round"]
+        assert set(bracket_data["consolation_by_round"]["3"]) == {"3", "4"}
+        assert set(bracket_data["byes"]["1"]) == {"1", "2"}
+
+        await db_session.refresh(m_champ)
+        await db_session.refresh(m_3rd)
+        assert m_champ.is_consolation is False
+        assert m_3rd.is_consolation is True
+
+    async def test_bye_matchups_created_during_sync(self, db_session: AsyncSession):
+        """sync_matchups creates bye rows for teams with first-round byes."""
+        user, league, uls = await self._setup_league_with_teams(db_session)
+
+        # Pre-seed bracket_data with byes
+        settings = dict(league.settings_json or {})
+        settings["bracket_data"] = {
+            "champion_franchise_id": None,
+            "consolation_by_round": {},
+            "consolation_pairings": [],
+            "byes": {"1": ["1", "2"]},
+        }
+        league.settings_json = settings
+        await db_session.flush()
+
+        # Mock adapter returns round 1 matchups (only seeds 3-6 play)
+        mock_adapter = _mock_adapter()
+        mock_adapter.get_matchups.return_value = [
+            PlatformMatchup(matchup_id=1, roster_id="3", points=100, week=15),
+            PlatformMatchup(matchup_id=1, roster_id="6", points=90, week=15),
+            PlatformMatchup(matchup_id=2, roster_id="4", points=95, week=15),
+            PlatformMatchup(matchup_id=2, roster_id="5", points=85, week=15),
+        ]
+
+        with patch("app.sync.engine.get_adapter", return_value=mock_adapter):
+            engine = SyncEngine(db_session)
+            await engine.sync_matchups(league, user.id, 15, adapter=mock_adapter)
+
+        result = await db_session.execute(
+            select(Matchup).where(
+                Matchup.league_id == league.id,
+                Matchup.week == 15,
+            )
+        )
+        matchups = result.scalars().all()
+
+        # 2 real matchups + 2 bye matchups = 4
+        assert len(matchups) == 4
+
+        bye_matchups = [m for m in matchups if m.away_user_league_id is None]
+        assert len(bye_matchups) == 2
+
+        bye_home_ids = {
+            next(
+                ul.platform_team_id
+                for ul in uls.values()
+                if ul.id == bm.home_user_league_id
+            )
+            for bm in bye_matchups
+        }
+        assert bye_home_ids == {"1", "2"}
+
+        for bm in bye_matchups:
+            assert bm.playoff_round == 1
+            assert bm.is_consolation is False
+            assert bm.home_score is None
+            assert bm.away_score is None

@@ -37,5 +37,13 @@ class PlatformAdapter(ABC):
         """Return platform-provided standings, or None to compute from matchups."""
         return None
 
+    async def get_winners_bracket(self, league_id: str) -> list[dict]:
+        """Return the winners/championship bracket data, or empty list."""
+        return []
+
+    async def get_losers_bracket(self, league_id: str) -> list[dict]:
+        """Return the losers/consolation bracket data, or empty list."""
+        return []
+
     async def get_players_map(self) -> dict[str, dict]:
         return {}

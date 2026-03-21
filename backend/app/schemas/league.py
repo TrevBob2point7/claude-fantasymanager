@@ -83,6 +83,7 @@ class MatchupRead(BaseModel):
     away_starters: list[MatchupPlayerRead] | None = None
     playoff_round: int | None = None
     is_consolation: bool = False
+    is_bye: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -109,6 +110,7 @@ class MatchupSummaryRead(BaseModel):
     is_user_matchup: bool = False
     playoff_round: int | None = None
     is_consolation: bool = False
+    is_bye: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -142,6 +144,7 @@ class LeagueDetailRead(BaseModel):
     league_type: LeagueType | None = None
     team_name: str | None = None
     current_week: int | None = None
+    champion_team_name: str | None = None
     created_at: datetime
     standings: list[StandingRead]
     roster: list[RosterEntryRead]

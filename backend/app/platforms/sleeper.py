@@ -52,7 +52,7 @@ class SleeperAdapter(PlatformAdapter):
 
         settings = lg.get("settings", {})
         type_code = settings.get("type", 0) if settings else 0
-        league_type_map = {0: "redraft", 1: "keeper", 2: "dynasty"}
+        league_type_map = {0: "redraft", 1: "keeper", 2: "dynasty", 3: "guillotine"}
         league_type = league_type_map.get(type_code)
 
         roster_positions = lg.get("roster_positions")
@@ -155,6 +155,18 @@ class SleeperAdapter(PlatformAdapter):
                     )
                 )
             return results
+
+    async def get_winners_bracket(self, league_id: str) -> list[dict]:
+        async with httpx.AsyncClient(base_url=BASE_URL, timeout=_CLIENT_TIMEOUT) as client:
+            resp = await client.get(f"/league/{league_id}/winners_bracket")
+            resp.raise_for_status()
+            return resp.json() or []
+
+    async def get_losers_bracket(self, league_id: str) -> list[dict]:
+        async with httpx.AsyncClient(base_url=BASE_URL, timeout=_CLIENT_TIMEOUT) as client:
+            resp = await client.get(f"/league/{league_id}/losers_bracket")
+            resp.raise_for_status()
+            return resp.json() or []
 
     async def get_transactions(self, league_id: str, week: int) -> list[PlatformTransaction]:
         async with httpx.AsyncClient(base_url=BASE_URL, timeout=_CLIENT_TIMEOUT) as client:

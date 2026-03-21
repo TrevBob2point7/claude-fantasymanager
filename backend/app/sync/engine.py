@@ -33,6 +33,14 @@ from app.sync.player_import import (
     get_or_create_player_by_mfl_id,
     get_or_create_player_by_sleeper_id,
 )
+from app.sync.playoffs import (
+    detect_byes_mfl,
+    detect_byes_sleeper,
+    detect_champion_mfl,
+    detect_champion_sleeper,
+    get_consolation_by_round_mfl,
+    get_consolation_pairings_sleeper,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -554,7 +562,30 @@ class SyncEngine:
             for m in platform_matchups:
                 groups.setdefault(m.matchup_id, []).append(m)
 
+            if not platform_matchups:
+                logger.warning("No platform matchups returned for league %s week %d", league.platform_league_id, week)
+            elif not groups:
+                logger.warning("No matchup groups for league %s week %d", league.platform_league_id, week)
+            elif not ul_by_platform_id:
+                logger.warning("No user_leagues for league %s (id=%s)", league.platform_league_id, league.id)
+            else:
+                logger.info(
+                    "Matchup sync league=%s week=%d: %d platform_matchups, %d groups, %d user_leagues, roster_ids=%s",
+                    league.platform_league_id, week,
+                    len(platform_matchups), len(groups), len(ul_by_platform_id),
+                    [m.roster_id for m in platform_matchups[:4]],
+                )
+
             playoff_round = _get_playoff_round(league, week)
+
+            # Load consolation data from stored bracket data
+            bracket_data = (league.settings_json or {}).get("bracket_data", {})
+            # MFL: round-based lookup; Sleeper: pairing-based lookup
+            consolation_by_round = bracket_data.get("consolation_by_round", {})
+            consolation_ids = set(consolation_by_round.get(str(playoff_round), []))
+            consolation_pairings = {
+                frozenset(p) for p in bracket_data.get("consolation_pairings", [])
+            }
 
             for _matchup_id, entries in groups.items():
                 if len(entries) < 2:
@@ -566,6 +597,13 @@ class SyncEngine:
                 home_ul = ul_by_platform_id.get(home.roster_id)
                 away_ul = ul_by_platform_id.get(away.roster_id)
                 if not home_ul or not away_ul:
+                    if week == 1:
+                        logger.warning(
+                            "Unmatched roster_id: home=%s (found=%s) away=%s (found=%s), known_ids=%s",
+                            home.roster_id, home_ul is not None,
+                            away.roster_id, away_ul is not None,
+                            list(ul_by_platform_id.keys())[:5],
+                        )
                     continue
 
                 # Skip phantom playoff matchups (projected pairings with no scores)
@@ -603,6 +641,20 @@ class SyncEngine:
                     )
                 )
 
+                # Determine consolation status from stored bracket data
+                is_consolation = False
+                if playoff_round:
+                    pair = frozenset({home.roster_id, away.roster_id})
+                    if consolation_pairings and pair in consolation_pairings:
+                        # Sleeper: exact pairing match from losers bracket
+                        is_consolation = True
+                    elif consolation_ids and (
+                        home.roster_id in consolation_ids
+                        and away.roster_id in consolation_ids
+                    ):
+                        # MFL: round-based franchise ID lookup
+                        is_consolation = True
+
                 matchup = existing.scalar_one_or_none()
                 if matchup:
                     matchup.home_score = home.points
@@ -610,6 +662,7 @@ class SyncEngine:
                     matchup.home_starters_json = home_starters
                     matchup.away_starters_json = away_starters
                     matchup.playoff_round = playoff_round
+                    matchup.is_consolation = is_consolation
                 else:
                     matchup = Matchup(
                         league_id=league.id,
@@ -621,14 +674,184 @@ class SyncEngine:
                         home_starters_json=home_starters,
                         away_starters_json=away_starters,
                         playoff_round=playoff_round,
+                        is_consolation=is_consolation,
                     )
                     self.db.add(matchup)
+
+            # Create bye matchups for playoff round 1
+            if playoff_round == 1:
+                bye_franchise_ids = (
+                    bracket_data.get("byes", {}).get("1", [])
+                )
+                for bye_fid in bye_franchise_ids:
+                    bye_ul = ul_by_platform_id.get(bye_fid)
+                    if not bye_ul:
+                        continue
+                    existing_bye = await self.db.execute(
+                        select(Matchup).where(
+                            Matchup.league_id == league.id,
+                            Matchup.week == week,
+                            Matchup.home_user_league_id == bye_ul.id,
+                            Matchup.away_user_league_id.is_(None),
+                        )
+                    )
+                    if not existing_bye.scalar_one_or_none():
+                        self.db.add(Matchup(
+                            league_id=league.id,
+                            week=week,
+                            home_user_league_id=bye_ul.id,
+                            away_user_league_id=None,
+                            home_score=None,
+                            away_score=None,
+                            playoff_round=1,
+                            is_consolation=False,
+                        ))
 
             await self.db.flush()
             await self._log_complete(log)
         except Exception as e:
             await self._log_error(log, str(e))
             raise
+
+    async def sync_playoff_brackets(
+        self,
+        league: League,
+        adapter: object | None = None,
+        credentials_json: dict | None = None,
+    ) -> None:
+        """Fetch bracket data and store in league.settings_json.
+
+        Stores bracket_data with champion_franchise_id, consolation_by_round
+        (MFL), consolation_pairings (Sleeper), and byes so that
+        is_consolation and bye matchups can be applied during sync.
+        Skips best ball and guillotine leagues.
+        """
+        league_type = str(league.league_type) if league.league_type else None
+        if league_type in ("bestball", "guillotine"):
+            return
+
+        if adapter is None:
+            adapter = get_adapter(
+                league.platform_type,
+                credentials_json=credentials_json,
+                year=league.season,
+            )
+
+        try:
+            winners = await adapter.get_winners_bracket(league.platform_league_id)
+            losers = await adapter.get_losers_bracket(league.platform_league_id)
+        except Exception:
+            logger.exception(
+                "Failed to fetch brackets for league %s", league.platform_league_id
+            )
+            return
+
+        if not winners:
+            return
+
+        # Detect champion and consolation data per round
+        champion_id: str | None = None
+        consolation_by_round: dict[int, list[str]] = {}
+
+        consolation_pairings: list[list[str]] = []
+
+        bye_ids: list[str] = []
+
+        if league.platform_type == PlatformType.sleeper:
+            champion_id = detect_champion_sleeper(winners)
+            consolation_pairings = [
+                list(pair) for pair in get_consolation_pairings_sleeper(losers)
+            ]
+            bye_ids = sorted(detect_byes_sleeper(winners))
+        elif league.platform_type == PlatformType.mfl:
+            champion_id = detect_champion_mfl(winners)
+            bye_ids = sorted(detect_byes_mfl(winners))
+            settings = league.settings_json or {}
+            last_reg = settings.get("lastRegularSeasonWeek")
+            if last_reg:
+                playoff_start = int(last_reg) + 1
+                raw = get_consolation_by_round_mfl(losers, playoff_start)
+                consolation_by_round = {r: sorted(ids) for r, ids in raw.items()}
+
+        # Store in settings_json
+        settings = dict(league.settings_json or {})
+        settings["bracket_data"] = {
+            "champion_franchise_id": champion_id,
+            "consolation_by_round": {str(r): ids for r, ids in consolation_by_round.items()},
+            "consolation_pairings": consolation_pairings,
+            "byes": {"1": bye_ids},
+        }
+        league.settings_json = settings
+        await self.db.flush()
+
+        # Update existing playoff matchups with is_consolation
+        if consolation_by_round:
+            await self._apply_consolation_flags(league, consolation_by_round)
+        if consolation_pairings:
+            await self._apply_consolation_pairings(league, consolation_pairings)
+
+    async def _apply_consolation_flags(
+        self, league: League, consolation_by_round: dict[int, list[str]],
+    ) -> None:
+        """Set is_consolation=True on playoff matchups where both teams are in consolation for that round."""
+        result = await self.db.execute(
+            select(Matchup).where(
+                Matchup.league_id == league.id,
+                Matchup.playoff_round.isnot(None),
+            )
+        )
+        matchups = result.scalars().all()
+
+        # Build user_league platform_team_id lookup
+        ul_result = await self.db.execute(
+            select(UserLeague).where(UserLeague.league_id == league.id)
+        )
+        ul_by_id = {ul.id: ul.platform_team_id for ul in ul_result.scalars().all()}
+
+        for m in matchups:
+            round_ids = set(consolation_by_round.get(m.playoff_round, []))
+            if not round_ids:
+                m.is_consolation = False
+                continue
+            home_pid = ul_by_id.get(m.home_user_league_id)
+            away_pid = ul_by_id.get(m.away_user_league_id)
+            if (home_pid and home_pid in round_ids) and (
+                away_pid and away_pid in round_ids
+            ):
+                m.is_consolation = True
+            else:
+                m.is_consolation = False
+
+        await self.db.flush()
+
+    async def _apply_consolation_pairings(
+        self, league: League, consolation_pairings: list[list[str]],
+    ) -> None:
+        """Set is_consolation on playoff matchups using exact Sleeper bracket pairings."""
+        result = await self.db.execute(
+            select(Matchup).where(
+                Matchup.league_id == league.id,
+                Matchup.playoff_round.isnot(None),
+            )
+        )
+        matchups = result.scalars().all()
+
+        ul_result = await self.db.execute(
+            select(UserLeague).where(UserLeague.league_id == league.id)
+        )
+        ul_by_id = {ul.id: ul.platform_team_id for ul in ul_result.scalars().all()}
+
+        pairing_set = {frozenset(p) for p in consolation_pairings}
+
+        for m in matchups:
+            home_pid = ul_by_id.get(m.home_user_league_id)
+            away_pid = ul_by_id.get(m.away_user_league_id)
+            if home_pid and away_pid:
+                m.is_consolation = frozenset({home_pid, away_pid}) in pairing_set
+            else:
+                m.is_consolation = False
+
+        await self.db.flush()
 
     async def sync_standings(
         self, league: League, user_id: UUID, credentials_json: dict | None = None,
@@ -1099,6 +1322,16 @@ class SyncEngine:
         except Exception:
             logger.exception(
                 "Failed to sync standings for historical league %s",
+                db_league.platform_league_id,
+            )
+
+        try:
+            await self.sync_playoff_brackets(
+                db_league, adapter=adapter, credentials_json=credentials_json,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to sync brackets for historical league %s",
                 db_league.platform_league_id,
             )
 

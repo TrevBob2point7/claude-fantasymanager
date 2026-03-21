@@ -96,6 +96,13 @@ async def _sync_stream(
             except Exception as e:
                 errors.append(f"standings({league.name}): {e}")
 
+            try:
+                await engine.sync_playoff_brackets(
+                    league, adapter=adapter, credentials_json=credentials_json,
+                )
+            except Exception as e:
+                errors.append(f"brackets({league.name}): {e}")
+
             yield progress(f"Synced {league_label}")
 
         # 4. Historical seasons
@@ -217,6 +224,14 @@ async def _league_sync_stream(
             )
         except Exception as e:
             errors.append(f"standings: {e}")
+
+        yield progress("Fetching playoff brackets...")
+        try:
+            await engine.sync_playoff_brackets(
+                league, adapter=adapter, credentials_json=credentials_json,
+            )
+        except Exception as e:
+            errors.append(f"brackets: {e}")
 
         # Sync historical seasons (metadata + standings only)
         if league.previous_league_id or account.platform_type == "mfl":

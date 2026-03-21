@@ -28,8 +28,8 @@ class Matchup(Base):
     home_user_league_id: Mapped[uuid.UUID] = mapped_column(
         sa.Uuid, sa.ForeignKey("user_leagues.id"), nullable=False
     )
-    away_user_league_id: Mapped[uuid.UUID] = mapped_column(
-        sa.Uuid, sa.ForeignKey("user_leagues.id"), nullable=False
+    away_user_league_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("user_leagues.id"), nullable=True
     )
     home_score: Mapped[decimal.Decimal | None] = mapped_column(sa.Numeric(10, 2), nullable=True)
     away_score: Mapped[decimal.Decimal | None] = mapped_column(sa.Numeric(10, 2), nullable=True)
@@ -51,4 +51,4 @@ class Matchup(Base):
 
     league: Mapped[League] = relationship(back_populates="matchups")
     home_user_league: Mapped[UserLeague] = relationship(foreign_keys=[home_user_league_id])
-    away_user_league: Mapped[UserLeague] = relationship(foreign_keys=[away_user_league_id])
+    away_user_league: Mapped[UserLeague | None] = relationship(foreign_keys=[away_user_league_id])
