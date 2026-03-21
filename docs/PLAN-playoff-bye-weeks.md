@@ -12,7 +12,7 @@ Both platforms encode byes implicitly — a team that appears in the bracket but
 
 ## Storage
 
-Store detected bye franchise IDs in `league.settings_json["bracket_data"]["byes"]` as a dict of `{playoff_round: [franchise_ids]}` (round 1 initially, but keeps the door open for multi-round byes in unusual formats).
+Store detected bye franchise IDs in `league.settings_json["bracket_data"]["byes"]` as a dict of `{"round": [franchise_ids]}` with string keys (JSON keys are always strings). Currently only `"1"` is populated, but the dict structure keeps the door open for multi-round byes in unusual formats.
 
 ## Schema Changes
 
@@ -81,7 +81,7 @@ After detecting champion and consolation data, also detect byes and store in `br
 
 ```python
 byes = detect_byes_sleeper(winners) if sleeper else detect_byes_mfl(winners)
-settings["bracket_data"]["byes"] = {1: list(byes)}  # round 1 byes
+settings["bracket_data"]["byes"] = {"1": sorted(byes)}  # round 1 byes
 ```
 
 ### In `sync_matchups()`
