@@ -128,7 +128,7 @@ League metadata synced from platforms.
 | `roster_size` | INTEGER | YES | — | |
 | `scoring_type` | `scoringtype` | YES | — | |
 | `league_type` | `leaguetype` | YES | — | |
-| `settings_json` | JSON | YES | — | Platform settings. Common keys: `roster_positions` (list of slot labels), `user_franchise_id` (MFL owner franchise ID), `endWeek`, `lastRegularSeasonWeek`, `leg` (Sleeper current week), `bracket_data` (object with `champion_franchise_id` and `consolation_franchise_ids`) |
+| `settings_json` | JSON | YES | — | Platform settings. Common keys: `roster_positions` (list of slot labels), `user_franchise_id` (MFL owner franchise ID), `endWeek`, `lastRegularSeasonWeek`, `leg` (Sleeper current week), `bracket_data` (see below) |
 | `previous_league_id` | VARCHAR(100) | YES | — | Platform's league ID for the prior season (used to chain seasons together) |
 | `league_group_id` | UUID | YES | — | Groups related seasons across platforms. Indexed. |
 | `created_at` | TIMESTAMPTZ | NO | `now()` | |
@@ -138,6 +138,24 @@ League metadata synced from platforms.
 **Relationships:** `user_leagues`, `standings`, `matchups`, `player_scores`, `projected_scores`, `transactions`
 
 **Season chaining:** Platforms handle multi-season leagues differently. Sleeper assigns a different `platform_league_id` per season, linked via `previous_league_id` (e.g. `lg_2025 → lg_2024 → lg_2023 → null`). MFL reuses the same `platform_league_id` across years and provides a history API listing all past years. The `league_group_id` is the primary grouping mechanism — all seasons of the same logical league share the same UUID, enabling Dashboard deduplication and the League Detail season selector. During sync, historical seasons are discovered via `previous_league_id` chains (Sleeper) or history entries (MFL).
+
+**`bracket_data` structure** (stored inside `settings_json`):
+
+```json
+{
+  "champion_franchise_id": "0011",
+  "consolation_by_round": { "3": ["0004", "0002"] },
+  "consolation_pairings": [["5", "6"], ["3", "4"]],
+  "byes": { "1": ["0001", "0011"] }
+}
+```
+
+| Key | Type | Platform | Description |
+|---|---|---|---|
+| `champion_franchise_id` | `string \| null` | Both | Platform franchise/roster ID of the season champion |
+| `consolation_by_round` | `{round: [ids]}` | MFL | Franchise IDs in consolation brackets, keyed by playoff round number (stringified). MFL bracket data includes week numbers, so rounds map directly to `playoff_round`. |
+| `consolation_pairings` | `[[id, id]]` | Sleeper | List of `[roster_id, roster_id]` pairs from the losers bracket. Used instead of round-based lookup because Sleeper bracket round numbers don't correspond to `playoff_round` (week-based). |
+| `byes` | `{round: [ids]}` | Both | Franchise/roster IDs that had a bye in the given playoff round. Currently only round `"1"` is populated. |
 
 ---
 
@@ -210,7 +228,7 @@ Weekly matchup pairings and scores.
 | `league_id` | UUID | NO | — | FK → `leagues.id` |
 | `week` | INTEGER | NO | — | |
 | `home_user_league_id` | UUID | NO | — | FK → `user_leagues.id` |
-| `away_user_league_id` | UUID | NO | — | FK → `user_leagues.id` |
+| `away_user_league_id` | UUID | YES | — | FK → `user_leagues.id`. NULL for bye matchups. |
 | `home_score` | NUMERIC(10,2) | YES | — | |
 | `away_score` | NUMERIC(10,2) | YES | — | |
 | `home_starters_json` | JSON | YES | — | `[{player_id, name, position, points, slot}]` |
