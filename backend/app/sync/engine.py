@@ -650,7 +650,7 @@ class SyncEngine:
                         is_consolation = True
                     elif consolation_ids and (
                         home.roster_id in consolation_ids
-                        or away.roster_id in consolation_ids
+                        and away.roster_id in consolation_ids
                     ):
                         # MFL: round-based franchise ID lookup
                         is_consolation = True
@@ -815,7 +815,7 @@ class SyncEngine:
                 continue
             home_pid = ul_by_id.get(m.home_user_league_id)
             away_pid = ul_by_id.get(m.away_user_league_id)
-            if (home_pid and home_pid in round_ids) or (
+            if (home_pid and home_pid in round_ids) and (
                 away_pid and away_pid in round_ids
             ):
                 m.is_consolation = True
