@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-def detect_champion_sleeper(winners_bracket: list[dict]) -> str | None:
+def detect_champion_sleeper(winners_bracket: list[dict] | None) -> str | None:
     """Return the roster_id of the championship winner from Sleeper bracket data.
 
     Sleeper bracket entries have: r (round), m (match_id), t1, t2, w (winner), l (loser).
@@ -17,7 +17,7 @@ def detect_champion_sleeper(winners_bracket: list[dict]) -> str | None:
     return None
 
 
-def detect_champion_mfl(winners_bracket_rounds: list[dict]) -> str | None:
+def detect_champion_mfl(winners_bracket_rounds: list[dict] | None) -> str | None:
     """Return the franchise_id of the championship winner from MFL bracket rounds.
 
     MFL bracket rounds are ordered; the last round is the championship.
@@ -68,7 +68,7 @@ def get_consolation_pairings_sleeper(losers_bracket: list[dict]) -> list[tuple[s
     return pairings
 
 
-def detect_byes_sleeper(winners_bracket: list[dict]) -> set[str]:
+def detect_byes_sleeper(winners_bracket: list[dict] | None) -> set[str]:
     """Return roster_ids that had a first-round bye."""
     if not winners_bracket:
         return set()
@@ -84,7 +84,7 @@ def detect_byes_sleeper(winners_bracket: list[dict]) -> set[str]:
     return all_ids - round_1_ids
 
 
-def detect_byes_mfl(winners_bracket_rounds: list[dict]) -> set[str]:
+def detect_byes_mfl(winners_bracket_rounds: list[dict] | None) -> set[str]:
     """Return franchise_ids that had a first-round bye."""
     if not winners_bracket_rounds:
         return set()
